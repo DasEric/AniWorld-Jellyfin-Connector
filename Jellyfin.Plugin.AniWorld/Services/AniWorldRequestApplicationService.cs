@@ -1021,7 +1021,18 @@ public sealed class AniWorldRequestApplicationService
 
             var total = ReadBoundedInt(item, "total_episodes", 0, MaxEpisodesPerRequest);
             var current = ReadBoundedInt(item, "current_episode", 0, total > 0 ? total : MaxEpisodesPerRequest);
-            var percent = ReadBoundedDouble(item, "percent", 0, 100);
+            
+            double percent = 0;
+            if (status == "completed")
+            {
+                percent = 100;
+            }
+            else if (status == "running")
+            {
+                double partial = ffmpegPercent > 0 ? ffmpegPercent / 100.0 : 0;
+                percent = Math.Min(100.0, Math.Round(((current + partial) / Math.Max(1, total)) * 100.0));
+            }
+
             var phase = item.TryGetProperty("phase", out var phaseValue)
                 && phaseValue.ValueKind == JsonValueKind.String
                 && phaseValue.GetString() is "download" or "ffmpeg"
