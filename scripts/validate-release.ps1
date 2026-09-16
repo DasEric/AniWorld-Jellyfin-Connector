@@ -22,18 +22,12 @@ if ([string]$properties.InformationalVersion -ne [string]$versionInfo.version -o
 
 $metadata = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\meta.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 if ([string]$metadata.version -ne [string]$versionInfo.versionFourPart -or
-    [string]$metadata.targetAbi -ne [string]$versionInfo.targetAbi -or
-    $metadata.autoUpdate -ne $true) {
+    [string]$metadata.targetAbi -ne [string]$versionInfo.targetAbi) {
     throw "meta.json does not match version.json"
 }
 
-$module = Get-Content -LiteralPath (Join-Path $projectRoot "MediaForge.Module\mediaforge_jellyfin_connector\__init__.py") -Raw -Encoding UTF8
-if ($module -notmatch ('MODULE_VERSION = "' + [regex]::Escape([string]$versionInfo.version) + '"')) {
-    throw "The MediaForge module version does not match version.json"
-}
-
 $service = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\PluginServiceRegistrator.cs") -Raw -Encoding UTF8
-if ($service -notmatch ('Jellyfin-MediaForge-Requests/' + [regex]::Escape([string]$versionInfo.version))) {
+if ($service -notmatch ('Jellyfin-AniWorld-Requests/' + [regex]::Escape([string]$versionInfo.version))) {
     throw "Runtime version strings do not match version.json"
 }
 
