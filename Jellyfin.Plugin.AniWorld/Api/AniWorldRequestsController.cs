@@ -579,11 +579,16 @@ public sealed class AniWorldRequestsController : ControllerBase
         {
             items = response;
         }
-        else if (response.ValueKind == JsonValueKind.Object
-            && response.TryGetProperty(itemsKey, out var wrappedItems)
-            && wrappedItems.ValueKind == JsonValueKind.Array)
+        else if (response.ValueKind == JsonValueKind.Object)
         {
-            items = wrappedItems;
+            if (response.TryGetProperty(itemsKey, out var wrapped) && wrapped.ValueKind == JsonValueKind.Array)
+                items = wrapped;
+            else if (response.TryGetProperty("results", out wrapped) && wrapped.ValueKind == JsonValueKind.Array)
+                items = wrapped;
+            else if (response.TryGetProperty("data", out wrapped) && wrapped.ValueKind == JsonValueKind.Array)
+                items = wrapped;
+            else
+                return output;
         }
         else
         {
@@ -605,27 +610,24 @@ public sealed class AniWorldRequestsController : ControllerBase
             }
 
             var rawUrl = ReadJsonString(item, "url", 2048);
-
-            // Wenn keine explizite Source, alle erlaubten Quellen durchsuchen
-            if (string.IsNullOrWhiteSpace(source))
+            if (string.IsNullOrWhiteSpace(rawUrl))
             {
-                source = allowedSources.Keys.FirstOrDefault() ?? string.Empty;
+                rawUrl = ReadJsonString(item, "link", 2048);
             }
 
-            if (!allowedSources.TryGetValue(source, out var sourceLabel)
-                || string.IsNullOrWhiteSpace(title)
-                || !MediaAccessGrantStore.TryNormalizeUrl(rawUrl, out var normalizedUrl))
+            if (string.IsNullOrWhiteSpace(source))
             {
-                // Versuche ohne Source-Filter, wenn AniWorld keine Source-Info hat
-                if (!string.IsNullOrWhiteSpace(title) && MediaAccessGrantStore.TryNormalizeUrl(rawUrl, out normalizedUrl))
-                {
-                    source = allowedSources.Keys.FirstOrDefault() ?? "aniworld";
-                    sourceLabel = allowedSources.GetValueOrDefault(source, source);
-                }
-                else
-                {
-                    continue;
-                }
+                source = allowedSources.Keys.FirstOrDefault() ?? "aniworld";
+            }
+
+            if (!allowedSources.TryGetValue(source, out var sourceLabel))
+            {
+                sourceLabel = source;
+            }
+
+            if (string.IsNullOrWhiteSpace(title) || !MediaAccessGrantStore.TryNormalizeUrl(rawUrl, out var normalizedUrl))
+            {
+                continue;
             }
 
             var posterUrl = ReadJsonString(item, "poster_url", 4096);

@@ -207,7 +207,7 @@ export default function (view, params) {
     const rawUrl = item.url || item.link || item.series_url;
     if (!rawUrl) return notice('Der Treffer enthält keine AniWorld-URL.', true);
     const generation = ++detailGeneration;
-    state.source = source; state.detail = null; q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">AniWorld prüft den Bestand…</div>'; q('request').disabled = true;
+    state.source = source; state.detail = null; q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">Bestand in Jellyfin wird geprüft…</div>'; q('request').disabled = true;
     setOptions(q('language'), [state.status.defaultLanguage || 'German Dub'], state.status.defaultLanguage);
     setOptions(q('provider'), [state.status.defaultProvider || 'VOE'], state.status.defaultProvider);
     try {

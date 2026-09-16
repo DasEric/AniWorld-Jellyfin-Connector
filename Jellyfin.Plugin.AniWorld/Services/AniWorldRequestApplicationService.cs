@@ -134,6 +134,7 @@ public sealed class AniWorldRequestApplicationService
             try
             {
                 var data = await _aniWorld.SearchAsync(query, item.Id, cancellationToken).ConfigureAwait(false);
+                data = DeduplicateSearchResults(data);
                 _grants.GrantFromJson(userId, item.Id, data);
                 return new AniWorldSearchGroup(item.Id, item.Label, data, null);
             }
@@ -180,6 +181,55 @@ public sealed class AniWorldRequestApplicationService
         }
 
         return new AniWorldSearchResponse(groups, candidates);
+    }
+
+    private static JsonElement DeduplicateSearchResults(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
+        {
+            return data;
+        }
+
+        var unique = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in results.EnumerateArray())
+        {
+            var title = ReadJsonString(item, "title", 300);
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = ReadJsonString(item, "name", 300);
+            }
+            
+            var baseTitle = CleanTitleForGrouping(title);
+            if (!string.IsNullOrWhiteSpace(baseTitle) && !unique.ContainsKey(baseTitle))
+            {
+                unique[baseTitle] = item;
+            }
+            else if (string.IsNullOrWhiteSpace(baseTitle))
+            {
+                unique[Guid.NewGuid().ToString()] = item;
+            }
+        }
+
+        var newObj = new Dictionary<string, object>();
+        foreach (var prop in data.EnumerateObject())
+        {
+            if (prop.Name != "results")
+            {
+                newObj[prop.Name] = prop.Value;
+            }
+        }
+        
+        newObj["results"] = unique.Values.ToArray();
+        return JsonDocument.Parse(JsonSerializer.Serialize(newObj)).RootElement.Clone();
+    }
+
+    private static string CleanTitleForGrouping(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return string.Empty;
+        var regex = new System.Text.RegularExpressions.Regex(
+            @"\s+(?:S\d+(?:E\d+)?|Staffel\s+\d+|Season\s+\d+|Episode\s+\d+).*$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return regex.Replace(title, string.Empty).Trim();
     }
 
     public async Task<MissingMediaPlan> PlanAsync(
@@ -894,11 +944,22 @@ public sealed class AniWorldRequestApplicationService
 
         foreach (var item in items.EnumerateArray())
         {
-            if (!item.TryGetProperty("queue_id", out var queueIdValue)
-                || queueIdValue.ValueKind != JsonValueKind.Number
-                || !queueIdValue.TryGetInt64(out var queueId)
-                || !allowed.Contains(queueId)
-                || !seen.Add(queueId)
+            if (!item.TryGetProperty("queue_id", out var queueIdValue))
+            {
+                continue;
+            }
+
+            long queueId = 0;
+            if (queueIdValue.ValueKind == JsonValueKind.Number && queueIdValue.TryGetInt64(out var numeric))
+            {
+                queueId = numeric;
+            }
+            else if (queueIdValue.ValueKind == JsonValueKind.String && long.TryParse(queueIdValue.GetString(), out numeric))
+            {
+                queueId = numeric;
+            }
+
+            if (queueId <= 0 || !allowed.Contains(queueId) || !seen.Add(queueId)
                 || !item.TryGetProperty("status", out var statusValue)
                 || statusValue.ValueKind != JsonValueKind.String)
             {
