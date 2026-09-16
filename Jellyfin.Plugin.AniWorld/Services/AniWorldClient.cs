@@ -42,6 +42,10 @@ public sealed class AniWorldClient
     public Task<JsonElement> GetHealthAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/queue/counts", null, cancellationToken);
 
+    /// <summary>Lädt die Einstellungen von AniWorld (inkl. aktiver Provider).</summary>
+    public Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/settings", null, cancellationToken);
+
     /// <summary>Gibt einen sanitizierten Verbindungsstatus zurück.</summary>
     public async Task<AniWorldConnectionStatus> CheckHealthAsync(CancellationToken cancellationToken)
     {

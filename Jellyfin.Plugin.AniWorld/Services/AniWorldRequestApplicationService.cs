@@ -63,7 +63,7 @@ public sealed class AniWorldRequestApplicationService
     /// Gibt die gefilterte Site-Liste zurück. Da AniWorld keinen /sources-Endpunkt hat,
     /// wird die statische Registry verwendet und per Konfiguration gefiltert.
     /// </summary>
-    public Task<IReadOnlyList<AniWorldSiteInfo>> GetAllowedSourcesAsync(
+    public async Task<IReadOnlyList<AniWorldSiteInfo>> GetAllowedSourcesAsync(
         string userId,
         CancellationToken cancellationToken,
         bool applyRateLimit = true)
@@ -73,8 +73,40 @@ public sealed class AniWorldRequestApplicationService
             throw TooManyRequests();
         }
 
-        IReadOnlyList<AniWorldSiteInfo> result = AniWorldSiteRegistry.GetAllowedSites(CurrentConfiguration);
-        return Task.FromResult(result);
+        var configuredSources = AniWorldSiteRegistry.GetAllowedSites(CurrentConfiguration);
+
+        try
+        {
+            var settings = await _aniWorld.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+            var activeSourceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            
+            foreach (var site in configuredSources)
+            {
+                var settingKey = $"enable_{site.Id.ToLowerInvariant()}";
+                if (settings.TryGetProperty(settingKey, out var enableValue) &&
+                    enableValue.ValueKind == JsonValueKind.True)
+                {
+                    activeSourceIds.Add(site.Id);
+                }
+                else if (!settings.TryGetProperty(settingKey, out _))
+                {
+                    // Fallback
+                    activeSourceIds.Add(site.Id);
+                }
+            }
+            
+            var result = configuredSources.Where(s => activeSourceIds.Contains(s.Id)).ToList();
+            if (result.Count > 0)
+            {
+                return result;
+            }
+        }
+        catch (Exception)
+        {
+            // Ignore failure to fetch settings
+        }
+
+        return configuredSources;
     }
 
     public async Task<AniWorldSearchResponse> SearchAsync(
@@ -104,7 +136,8 @@ public sealed class AniWorldRequestApplicationService
             throw TooManyRequests();
         }
 
-        var sources = AniWorldSiteRegistry.GetAllowedSites(CurrentConfiguration);
+        var sourcesTask = await GetAllowedSourcesAsync(userId, cancellationToken, applyRateLimit: false).ConfigureAwait(false);
+        var sources = sourcesTask.ToList();
         if (mediaType is not null)
         {
             sources = sources.Where(item => item.MediaTypes.Contains(mediaType, StringComparer.Ordinal)).ToList();
