@@ -11,7 +11,7 @@ if ($Tag -ne $expectedTag) {
     throw "Release tag '$Tag' does not match $expectedTag from version.json"
 }
 
-[xml]$project = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.MediaForge\Jellyfin.Plugin.MediaForge.csproj") -Raw -Encoding UTF8
+[xml]$project = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\Jellyfin.Plugin.AniWorld.csproj") -Raw -Encoding UTF8
 $properties = $project.Project.PropertyGroup | Select-Object -First 1
 if ([string]$properties.InformationalVersion -ne [string]$versionInfo.version -or
     [string]$properties.Version -ne [string]$versionInfo.versionFourPart -or
@@ -20,7 +20,7 @@ if ([string]$properties.InformationalVersion -ne [string]$versionInfo.version -o
     throw "The .NET project version does not match version.json"
 }
 
-$metadata = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.MediaForge\meta.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$metadata = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\meta.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 if ([string]$metadata.version -ne [string]$versionInfo.versionFourPart -or
     [string]$metadata.targetAbi -ne [string]$versionInfo.targetAbi -or
     $metadata.autoUpdate -ne $true) {
@@ -32,7 +32,7 @@ if ($module -notmatch ('MODULE_VERSION = "' + [regex]::Escape([string]$versionIn
     throw "The MediaForge module version does not match version.json"
 }
 
-$service = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.MediaForge\PluginServiceRegistrator.cs") -Raw -Encoding UTF8
+$service = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\PluginServiceRegistrator.cs") -Raw -Encoding UTF8
 if ($service -notmatch ('Jellyfin-MediaForge-Requests/' + [regex]::Escape([string]$versionInfo.version))) {
     throw "Runtime version strings do not match version.json"
 }

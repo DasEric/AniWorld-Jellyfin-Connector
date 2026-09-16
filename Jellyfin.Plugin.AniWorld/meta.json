@@ -1,0 +1,12 @@
+{
+  "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "name": "AniWorld Requests",
+  "description": "AniWorld-Suche und Download-Anfragen für alle Jellyfin-Benutzer.",
+  "overview": "Erlaubt Jellyfin-Benutzern, Inhalte auf AniWorld und weiteren Quellen zu suchen und Download-Anfragen zu stellen.",
+  "owner": "Eric",
+  "category": "General",
+  "version": "1.0.0.0",
+  "targetAbi": "12.0.0.0",
+  "framework": "net10.0",
+  "changelog": "Initiale AniWorld-Version (Migration von MediaForge)."
+}

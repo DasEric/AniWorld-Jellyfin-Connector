@@ -29,11 +29,11 @@ function Update-ExactText([string]$RelativePath, [string]$OldText, [string]$NewT
     [IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))
 }
 
-Update-ExactText "Jellyfin.Plugin.MediaForge\Jellyfin.Plugin.MediaForge.csproj" $oldFourPart $newFourPart
-Update-ExactText "Jellyfin.Plugin.MediaForge\Jellyfin.Plugin.MediaForge.csproj" "<InformationalVersion>$oldVersion</InformationalVersion>" "<InformationalVersion>$Version</InformationalVersion>"
-Update-ExactText "Jellyfin.Plugin.MediaForge\meta.json" ('"version": "' + $oldFourPart + '"') ('"version": "' + $newFourPart + '"')
-Update-ExactText "Jellyfin.Plugin.MediaForge\meta.json" ("v$oldVersion\n") ("v$Version\n")
-Update-ExactText "Jellyfin.Plugin.MediaForge\PluginServiceRegistrator.cs" "Jellyfin-MediaForge-Requests/$oldVersion" "Jellyfin-MediaForge-Requests/$Version"
+Update-ExactText "Jellyfin.Plugin.AniWorld\Jellyfin.Plugin.AniWorld.csproj" $oldFourPart $newFourPart
+Update-ExactText "Jellyfin.Plugin.AniWorld\Jellyfin.Plugin.AniWorld.csproj" "<InformationalVersion>$oldVersion</InformationalVersion>" "<InformationalVersion>$Version</InformationalVersion>"
+Update-ExactText "Jellyfin.Plugin.AniWorld\meta.json" ('"version": "' + $oldFourPart + '"') ('"version": "' + $newFourPart + '"')
+Update-ExactText "Jellyfin.Plugin.AniWorld\meta.json" ("v$oldVersion\n") ("v$Version\n")
+Update-ExactText "Jellyfin.Plugin.AniWorld\PluginServiceRegistrator.cs" "Jellyfin-MediaForge-Requests/$oldVersion" "Jellyfin-MediaForge-Requests/$Version"
 Update-ExactText "MediaForge.Module\mediaforge_jellyfin_connector\__init__.py" ('MODULE_VERSION = "' + $oldVersion + '"') ('MODULE_VERSION = "' + $Version + '"')
 $versionInfo.version = $Version
 $versionInfo.versionFourPart = $newFourPart

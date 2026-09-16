@@ -26,7 +26,7 @@ if ($ReleaseTag -ne "v$version") {
     throw "Release tag '$ReleaseTag' does not match version v$version"
 }
 
-$archiveName = "MediaForgeRequests_$version.zip"
+$archiveName = "AniWorldRequests_$version.zip"
 $archivePath = Join-Path $projectRoot "dist\$archiveName"
 if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
     throw "Release archive not found: $archivePath. Run scripts/build.ps1 first."
@@ -36,7 +36,7 @@ $checksum = (Get-FileHash -LiteralPath $archivePath -Algorithm MD5).Hash.ToUpper
 $sourceUrl = "https://github.com/$RepositorySlug/releases/download/$ReleaseTag/$archiveName"
 $currentVersion = [ordered]@{
     version = $versionFourPart
-    changelog = "MediaForge 1.6 provider and queue compatibility, validated download options, authoritative path selection, and actionable connector-scope diagnostics."
+    changelog = "AniWorld 1.6 provider and queue compatibility, validated download options, authoritative path selection, and actionable connector-scope diagnostics."
     targetAbi = $targetAbi
     sourceUrl = $sourceUrl
     checksum = $checksum
@@ -51,9 +51,9 @@ if (Test-Path -LiteralPath $historyPath -PathType Leaf) {
 $manifest = @(
     [ordered]@{
         guid = "2ea7f67d-8e4d-4c84-bd5a-a5bcd713bb23"
-        name = "MediaForge Requests"
-        description = "Search MediaForge for movies and series directly in Jellyfin, submit requests, withdraw pending requests, and monitor download progress."
-        overview = "MediaForge search and download requests for all Jellyfin users"
+        name = "AniWorld Requests"
+        description = "Search AniWorld for movies and series directly in Jellyfin, submit requests, withdraw pending requests, and monitor download progress."
+        overview = "AniWorld search and download requests for all Jellyfin users"
         owner = "Eric"
         category = "General"
         versions = $versions

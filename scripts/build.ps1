@@ -11,8 +11,8 @@ $releaseVersion = [string]$versionInfo.version
 if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') {
     throw "version.json contains an invalid semantic version"
 }
-$project = Join-Path $projectRoot "Jellyfin.Plugin.MediaForge\Jellyfin.Plugin.MediaForge.csproj"
-$output = Join-Path $projectRoot "Jellyfin.Plugin.MediaForge\bin\$Configuration\net10.0"
+$project = Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\Jellyfin.Plugin.AniWorld.csproj"
+$output = Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\bin\$Configuration\net10.0"
 $dist = Join-Path $projectRoot "dist"
 
 function Get-ContainedPath([string]$Parent, [string]$Child) {
@@ -44,21 +44,21 @@ if (Test-Path -LiteralPath $moduleStage) {
     Remove-Item -LiteralPath $moduleStage -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $pluginStage | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $moduleStage "mediaforge_jellyfin_connector") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $moduleStage "AniWorld_jellyfin_connector") | Out-Null
 
-$pluginDll = Join-Path $dist "Jellyfin.Plugin.MediaForge.dll"
-Copy-Item -LiteralPath (Join-Path $output "Jellyfin.Plugin.MediaForge.dll") -Destination $pluginDll -Force
+$pluginDll = Join-Path $dist "Jellyfin.Plugin.AniWorld.dll"
+Copy-Item -LiteralPath (Join-Path $output "Jellyfin.Plugin.AniWorld.dll") -Destination $pluginDll -Force
 Copy-Item -LiteralPath $pluginDll -Destination $pluginStage
-Copy-Item -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.MediaForge\meta.json") -Destination $pluginStage
-Copy-Item -Path (Join-Path $projectRoot "MediaForge.Module\mediaforge_jellyfin_connector\*.py") -Destination (Join-Path $moduleStage "mediaforge_jellyfin_connector")
+Copy-Item -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\meta.json") -Destination $pluginStage
+Copy-Item -Path (Join-Path $projectRoot "AniWorld.Module\AniWorld_jellyfin_connector\*.py") -Destination (Join-Path $moduleStage "AniWorld_jellyfin_connector")
 
-$pluginZip = Join-Path $dist "MediaForgeRequests_$releaseVersion.zip"
-$moduleZip = Join-Path $dist "mediaforge_jellyfin_connector_$releaseVersion.zip"
+$pluginZip = Join-Path $dist "AniWorldRequests_$releaseVersion.zip"
+$moduleZip = Join-Path $dist "AniWorld_jellyfin_connector_$releaseVersion.zip"
 if (Test-Path -LiteralPath $pluginZip) { Remove-Item -LiteralPath $pluginZip -Force }
 if (Test-Path -LiteralPath $moduleZip) { Remove-Item -LiteralPath $moduleZip -Force }
 
 Compress-Archive -Path (Join-Path $pluginStage "*") -DestinationPath $pluginZip -CompressionLevel Optimal
-Compress-Archive -Path (Join-Path $moduleStage "mediaforge_jellyfin_connector") -DestinationPath $moduleZip -CompressionLevel Optimal
+Compress-Archive -Path (Join-Path $moduleStage "AniWorld_jellyfin_connector") -DestinationPath $moduleZip -CompressionLevel Optimal
 Remove-Item -LiteralPath $pluginStage -Recurse -Force
 Remove-Item -LiteralPath $moduleStage -Recurse -Force
 
