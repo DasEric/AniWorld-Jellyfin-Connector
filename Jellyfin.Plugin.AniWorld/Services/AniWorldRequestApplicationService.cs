@@ -975,6 +975,18 @@ public sealed class AniWorldRequestApplicationService
             return output;
         }
 
+        double ffmpegPercent = 0;
+        if (response.ValueKind == JsonValueKind.Object && response.TryGetProperty("ffmpeg_progress", out var ffmpegProgress) && ffmpegProgress.ValueKind == JsonValueKind.Object)
+        {
+            if (ffmpegProgress.TryGetProperty("active", out var active) && active.ValueKind == JsonValueKind.True)
+            {
+                if (ffmpegProgress.TryGetProperty("percent", out var pValue) && pValue.ValueKind == JsonValueKind.Number)
+                {
+                    pValue.TryGetDouble(out ffmpegPercent);
+                }
+            }
+        }
+
         foreach (var item in items.EnumerateArray())
         {
             if (!item.TryGetProperty("queue_id", out var queueIdValue) &&
