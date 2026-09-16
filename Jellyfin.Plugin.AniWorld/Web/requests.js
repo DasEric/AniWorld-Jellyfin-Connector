@@ -402,9 +402,17 @@ export default function (view, params) {
   }
   async function decide(id, action) { try { await call('Admin/Requests/' + id + '/' + action, { method: 'POST', body: action === 'Reject' ? { reason: 'Vom Administrator abgelehnt.' } : {} }); await loadAdmin(); } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); } }
   async function withdrawRequest(id) { if (!window.confirm('Diese noch nicht freigegebene Anfrage zurückziehen?')) return; try { await call('Requests/' + id, { method: 'DELETE' }); await loadMine(); } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); } }
-  function progressLabel(progress) { if (!progress) return ''; return ({ queued: 'Wartet auf Download', running: 'Wird heruntergeladen', completed: 'Download fertig', partial: 'Teilweise fertig', failed: 'Download fehlgeschlagen', cancelled: 'In AniWorld abgebrochen' })[progress.status] || ''; }
+  function progressLabel(progress) { 
+    if (!progress) return ''; 
+    if (progress.status === 'running') {
+      return progress.total_episodes > 1 
+        ? progress.current_episode + ' von ' + progress.total_episodes + ' gedownloaded'
+        : 'Wird gedownloaded';
+    }
+    return ({ queued: 'Wartet auf Download', completed: 'Fertig', partial: 'Teilweise fertig', failed: 'Fehlgeschlagen', cancelled: 'Abgebrochen' })[progress.status] || ''; 
+  }
   function progressDetail(progress) { const phase = ({ download: 'Download', ffmpeg: 'Verarbeitung' })[progress.phase] || 'Download'; const episodes = progress.total_episodes > 1 ? ' · ' + progress.current_episode + '/' + progress.total_episodes + ' Episoden' : ''; return phase + ': ' + Math.round(Number(progress.percent) || 0) + '%' + episodes; }
-  function statusLabel(status) { return ({ pending: 'Ausstehend', processing: 'Wird übergeben', queued: 'In AniWorld', completed: 'Download fertig', available: 'Bereits in Jellyfin vorhanden', partial: 'Teilweise fertig', cancelled: 'Außerhalb von Jellyfin abgebrochen', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen', failed: 'Fehlgeschlagen' })[status] || status; }
+  function statusLabel(status) { return ({ pending: 'Ausstehend', processing: 'Wird übergeben', queued: 'Wartet auf Download', completed: 'Fertig', available: 'Bereits in Jellyfin vorhanden', partial: 'Teilweise fertig', cancelled: 'Abgebrochen', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen', failed: 'Fehlgeschlagen' })[status] || status; }
   q('refresh-mine').addEventListener('click', () => loadMine({ initial: !mineRendered })); q('refresh-admin').addEventListener('click', loadAdmin);
   setVisibilityListener(true);
   view.addEventListener('viewshow', () => { if (disposed) return; mineVisible = true; setVisibilityListener(true); if (state.tab === 'mine') loadMine({ initial: !mineRendered }); });

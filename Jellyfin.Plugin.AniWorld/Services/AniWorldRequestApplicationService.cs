@@ -977,7 +977,8 @@ public sealed class AniWorldRequestApplicationService
 
         foreach (var item in items.EnumerateArray())
         {
-            if (!item.TryGetProperty("queue_id", out var queueIdValue))
+            if (!item.TryGetProperty("queue_id", out var queueIdValue) &&
+                !item.TryGetProperty("id", out queueIdValue))
             {
                 continue;
             }
