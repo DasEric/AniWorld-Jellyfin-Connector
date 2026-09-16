@@ -109,9 +109,30 @@ public sealed class AniWorldClient
     public Task<JsonElement> GetPopularAnimesAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/popular-animes", null, cancellationToken);
 
-    /// <summary>Lädt Discover-Inhalte (beliebte Filme).</summary>
+    /// <summary>Lädt Discover-Inhalte (beliebte Filme, oft MegaKino).</summary>
     public Task<JsonElement> GetPopularMoviesAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/popular-movies", null, cancellationToken);
+
+    public Task<JsonElement> GetNewSeriesAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/new-series", null, cancellationToken);
+
+    public Task<JsonElement> GetPopularSeriesAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/popular-series", null, cancellationToken);
+
+    public Task<JsonElement> GetKinoxMoviesAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/kinox-movies", null, cancellationToken);
+
+    public Task<JsonElement> GetFilmpalastMoviesAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/filmpalast-movies", null, cancellationToken);
+
+    public Task<JsonElement> GetCinebyMoviesAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/cineby-movies", null, cancellationToken);
+
+    public Task<JsonElement> GetBurningSeriesAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/burningseries-series", null, cancellationToken);
+
+    public Task<JsonElement> GetHtvTrendingAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/htv-trending", null, cancellationToken);
 
     /// <summary>Lädt ein Bild über den AniWorld-Bild-Proxy.</summary>
     public async Task<AniWorldImage> GetImageAsync(string url, CancellationToken cancellationToken)

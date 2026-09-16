@@ -106,25 +106,84 @@ public sealed class AniWorldRequestsController : ControllerBase
 
         try
         {
-            var sourcesTask = _application.GetAllowedSourcesAsync(
+            var allowedSourcesList = await _application.GetAllowedSourcesAsync(
                 userId,
                 cancellationToken,
-                applyRateLimit: false);
+                applyRateLimit: false).ConfigureAwait(false);
+            var allowed = allowedSourcesList.ToDictionary(source => source.Id, source => source.Label, StringComparer.OrdinalIgnoreCase);
 
-            // AniWorld hat separate Endpunkte für Discover – parallel abfragen
-            var newAnimesTask = _aniWorld.GetNewAnimesAsync(cancellationToken);
-            var popularAnimesTask = _aniWorld.GetPopularAnimesAsync(cancellationToken);
-            var popularMoviesTask = _aniWorld.GetPopularMoviesAsync(cancellationToken);
+            var tasks = new List<Task<(string category, JsonElement data)>>();
 
-            await Task.WhenAll(sourcesTask, newAnimesTask, popularAnimesTask, popularMoviesTask).ConfigureAwait(false);
+            void AddTask(string category, Func<CancellationToken, Task<JsonElement>> func)
+            {
+                tasks.Add(func(cancellationToken).ContinueWith(t => 
+                {
+                    return t.IsFaulted || t.IsCanceled ? (category, default(JsonElement)) : (category, t.Result);
+                }, cancellationToken));
+            }
 
-            var allowed = (await sourcesTask.ConfigureAwait(false))
-                .ToDictionary(source => source.Id, source => source.Label, StringComparer.OrdinalIgnoreCase);
+            if (allowed.ContainsKey("aniworld"))
+            {
+                AddTask("new", _aniWorld.GetNewAnimesAsync);
+                AddTask("popular", _aniWorld.GetPopularAnimesAsync);
+            }
+            
+            if (allowed.ContainsKey("sto"))
+            {
+                AddTask("new", _aniWorld.GetNewSeriesAsync);
+                AddTask("popular", _aniWorld.GetPopularSeriesAsync);
+            }
+
+            if (allowed.ContainsKey("burningseries"))
+            {
+                AddTask("new", _aniWorld.GetBurningSeriesAsync);
+            }
+
+            if (allowed.ContainsKey("htv"))
+            {
+                AddTask("popular", _aniWorld.GetHtvTrendingAsync);
+            }
+
+            if (allowed.ContainsKey("megakino"))
+            {
+                AddTask("movies", _aniWorld.GetPopularMoviesAsync);
+            }
+
+            if (allowed.ContainsKey("filmpalast"))
+            {
+                AddTask("movies", _aniWorld.GetFilmpalastMoviesAsync);
+            }
+
+            if (allowed.ContainsKey("kinox"))
+            {
+                AddTask("movies", _aniWorld.GetKinoxMoviesAsync);
+            }
+
+            if (allowed.ContainsKey("cineby"))
+            {
+                AddTask("movies", _aniWorld.GetCinebyMoviesAsync);
+            }
+
+            var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            var newItems = new List<DiscoverItem>();
+            var popularItems = new List<DiscoverItem>();
+            var movieItems = new List<DiscoverItem>();
+
+            foreach (var (category, data) in results)
+            {
+                if (data.ValueKind == JsonValueKind.Undefined) continue;
+                var rowItems = ReadDiscoverRow(data, "items", allowed);
+                if (category == "new") newItems.AddRange(rowItems);
+                else if (category == "popular") popularItems.AddRange(rowItems);
+                else if (category == "movies") movieItems.AddRange(rowItems);
+            }
+
             var rows = new Dictionary<string, IReadOnlyList<DiscoverItem>>(StringComparer.Ordinal)
             {
-                ["new"] = ReadDiscoverRow(await newAnimesTask.ConfigureAwait(false), "items", allowed),
-                ["popular"] = ReadDiscoverRow(await popularAnimesTask.ConfigureAwait(false), "items", allowed),
-                ["movies"] = ReadDiscoverRow(await popularMoviesTask.ConfigureAwait(false), "items", allowed),
+                ["new"] = newItems.Take(36).ToList(),
+                ["popular"] = popularItems.Take(36).ToList(),
+                ["movies"] = movieItems.Take(36).ToList(),
             };
 
             foreach (var item in rows.Values.SelectMany(items => items))
