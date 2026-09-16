@@ -34,31 +34,31 @@ if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
 
 $checksum = (Get-FileHash -LiteralPath $archivePath -Algorithm MD5).Hash.ToUpperInvariant()
 $sourceUrl = "https://github.com/$RepositorySlug/releases/download/$ReleaseTag/$archiveName"
-$currentVersion = [ordered]@{
-    version = $versionFourPart
-    changelog = "AniWorld 1.6 provider and queue compatibility, validated download options, authoritative path selection, and actionable connector-scope diagnostics."
-    targetAbi = $targetAbi
-    sourceUrl = $sourceUrl
-    checksum = $checksum
-    timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-}
-$versions = @($currentVersion)
-$historyPath = Join-Path $projectRoot "manifest-history.json"
-if (Test-Path -LiteralPath $historyPath -PathType Leaf) {
-    $history = @(Get-Content -LiteralPath $historyPath -Raw -Encoding UTF8 | ConvertFrom-Json)
-    $versions += @($history | Where-Object { [string]$_.version -ne $versionFourPart })
-}
-$manifest = @(
-    [ordered]@{
-        guid = "2ea7f67d-8e4d-4c84-bd5a-a5bcd713bb23"
-        name = "AniWorld Requests"
-        description = "Search AniWorld for movies and series directly in Jellyfin, submit requests, withdraw pending requests, and monitor download progress."
-        overview = "AniWorld search and download requests for all Jellyfin users"
-        owner = "Eric"
-        category = "General"
-        versions = $versions
+    $currentVersion = [ordered]@{
+        version = $versionFourPart
+        changelog = "Bugfixes für Discover, Suche und Fortschrittsbalken."
+        targetAbi = $targetAbi
+        sourceUrl = $sourceUrl
+        checksum = $checksum
+        timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     }
-)
+    $versions = @($currentVersion)
+    $historyPath = Join-Path $projectRoot "manifest-history.json"
+    if (Test-Path -LiteralPath $historyPath -PathType Leaf) {
+        $history = @(Get-Content -LiteralPath $historyPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+        $versions += @($history | Where-Object { [string]$_.version -ne $versionFourPart })
+    }
+    $manifest = @(
+        [ordered]@{
+            guid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            name = "AniWorld Requests"
+            description = "AniWorld-Suche und Download-Anfragen für alle Jellyfin-Benutzer."
+            overview = "Erlaubt Jellyfin-Benutzern, Inhalte auf AniWorld und weiteren Quellen zu suchen und Download-Anfragen zu stellen."
+            owner = "Eric"
+            category = "General"
+            versions = $versions
+        }
+    )
 
 $repositoryDirectory = Join-Path $projectRoot "repository"
 New-Item -ItemType Directory -Force -Path $repositoryDirectory | Out-Null
