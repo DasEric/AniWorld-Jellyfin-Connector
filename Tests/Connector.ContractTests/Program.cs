@@ -12,6 +12,10 @@ var tests = new (string Name, Action Run)[]
     ("extended queue entries round-trip", ExtendedQueueEntriesRoundTrip),
     ("fork sources are registered", ForkSourcesAreRegistered),
     ("only enabled AniWorld sources are exposed", OnlyEnabledSourcesAreExposed),
+    ("site default path is selected", SiteDefaultPathIsSelected),
+    ("unrelated site path is not selected", UnrelatedSitePathIsNotSelected),
+    ("invalid path response is rejected", InvalidPathResponseIsRejected),
+    ("queue sends the site default path ID", QueueSendsSiteDefaultPathId),
 };
 
 var failed = 0;
@@ -124,6 +128,51 @@ static void OnlyEnabledSourcesAreExposed()
         document.RootElement,
         AniWorldSiteRegistry.KnownSites);
     True(enabled.Select(source => source.Id).SequenceEqual(["aniworld", "moflix"]));
+}
+
+static void SiteDefaultPathIsSelected()
+{
+    using var document = JsonDocument.Parse(
+        """
+        {"paths":[
+          {"id":4,"path":"/other","default_sites":"sto"},
+          {"id":7,"path":"/movies","default_sites":"filmpalast, filmo"},
+          {"id":9,"path":"/later","default_sites":"filmo"}
+        ]}
+        """);
+    Equal(7, AniWorldClient.SelectDefaultPathId(document.RootElement, "filmo"));
+}
+
+static void UnrelatedSitePathIsNotSelected()
+{
+    using var document = JsonDocument.Parse(
+        """
+        {"paths":[{"id":7,"path":"/movies","default_sites":"filmpalast"}]}
+        """);
+    True(AniWorldClient.SelectDefaultPathId(document.RootElement, "filmo") is null);
+}
+
+static void InvalidPathResponseIsRejected()
+{
+    using var document = JsonDocument.Parse("{\"paths\":[{\"id\":0,\"path\":\"/movies\",\"default_sites\":\"filmo\"}]}");
+    Throws<AniWorldException>(() => AniWorldClient.SelectDefaultPathId(document.RootElement, "filmo"));
+}
+
+static void QueueSendsSiteDefaultPathId()
+{
+    var request = new MediaRequest
+    {
+        Source = "filmo",
+        SeriesUrl = "https://example.test/movie",
+        Title = "Example",
+        EpisodesJson = "[\"https://example.test/movie\"]",
+        Language = "German Dub",
+        Provider = "VOE",
+    };
+    using var body = JsonDocument.Parse(JsonSerializer.Serialize(AniWorldClient.CreateDownloadPayload(request, 7)));
+    Equal(7, body.RootElement.GetProperty("custom_path_id").GetInt32());
+    Equal("https://example.test/movie", body.RootElement.GetProperty("series_url").GetString());
+    Equal("https://example.test/movie", body.RootElement.GetProperty("episodes")[0].GetString());
 }
 
 static void True(bool condition)

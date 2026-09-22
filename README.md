@@ -9,6 +9,7 @@ Das Plugin kommuniziert direkt mit der REST-API des [AniWorld-Downloader-Forks](
 - **Suche:** Durchsuche AniWorld und alle aktiven Quellen (STO, Kinox, FilmPalast etc.) nach Serien und Filmen.
 - **Genehmigungs-System:** Benutzer können Inhalte anfragen, welche von Admins mit einem Klick freigegeben werden. Alternativ ist ein Modus für automatische Freigaben (Direct-Download) verfügbar.
 - **Echtzeit-Synchronisation:** Das Plugin überwacht den Download-Status im AniWorld-Downloader und zeigt dir den Ladebalken live in Jellyfin an.
+- **Downloadpfade:** Beim Einreihen wird der in AniWorld für die jeweilige Quelle festgelegte Standardpfad übernommen. Ohne Seitenstandard gilt der allgemeine AniWorld-Downloadpfad.
 
 ## Installation in Jellyfin
 

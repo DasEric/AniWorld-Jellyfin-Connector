@@ -50,6 +50,10 @@ public sealed class AniWorldClient
     public Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/settings", null, cancellationToken);
 
+    /// <summary>Lädt die benutzerdefinierten Pfade samt Standardquellen.</summary>
+    public Task<JsonElement> GetCustomPathsAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/custom-paths", null, cancellationToken);
+
     /// <summary>Gibt einen sanitizierten Verbindungsstatus zurück.</summary>
     public async Task<AniWorldConnectionStatus> CheckHealthAsync(CancellationToken cancellationToken)
     {
@@ -236,17 +240,14 @@ public sealed class AniWorldClient
     /// <summary>Reiht einen Download in die AniWorld-Queue ein.</summary>
     public async Task<AniWorldQueueResult> QueueAsync(MediaRequest request, CancellationToken cancellationToken)
     {
+        // AniWorld wählt den Standardpfad einer Quelle nur in seiner Weboberfläche
+        // vor. Die API benötigt die custom_path_id ausdrücklich im Downloadaufruf.
+        var customPaths = await GetCustomPathsAsync(cancellationToken).ConfigureAwait(false);
+        var customPathId = SelectDefaultPathId(customPaths, request.Source);
         var response = await SendAsync(
             HttpMethod.Post,
             "api/download",
-            new
-            {
-                episodes = request.Episodes,
-                language = request.Language,
-                provider = request.Provider,
-                title = request.Title,
-                series_url = request.SeriesUrl,
-            },
+            CreateDownloadPayload(request, customPathId),
             cancellationToken).ConfigureAwait(false);
 
         long? parsedQueueId = null;
@@ -287,6 +288,66 @@ public sealed class AniWorldClient
             HttpStatusCode.BadGateway,
             "AniWorld hat keine gültige Warteschlangen-ID zurückgegeben.");
     }
+
+    internal static int? SelectDefaultPathId(JsonElement response, string source)
+    {
+        if (response.ValueKind != JsonValueKind.Object
+            || !response.TryGetProperty("paths", out var paths)
+            || paths.ValueKind != JsonValueKind.Array)
+        {
+            throw InvalidCustomPaths();
+        }
+
+        foreach (var path in paths.EnumerateArray())
+        {
+            if (path.ValueKind != JsonValueKind.Object
+                || !path.TryGetProperty("default_sites", out var defaultSites)
+                || defaultSites.ValueKind != JsonValueKind.String)
+            {
+                throw InvalidCustomPaths();
+            }
+
+            var isDefault = (defaultSites.GetString() ?? string.Empty)
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Contains(source, StringComparer.OrdinalIgnoreCase);
+            if (!isDefault)
+            {
+                continue;
+            }
+
+            if (!path.TryGetProperty("id", out var id)
+                || id.ValueKind != JsonValueKind.Number
+                || !id.TryGetInt32(out var pathId)
+                || pathId <= 0
+                || !path.TryGetProperty("path", out var directory)
+                || directory.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(directory.GetString()))
+            {
+                throw InvalidCustomPaths();
+            }
+
+            // Die AniWorld-Oberfläche verwendet ebenfalls den ersten Treffer.
+            return pathId;
+        }
+
+        return null;
+    }
+
+    internal static object CreateDownloadPayload(MediaRequest request, int? customPathId)
+        => new
+        {
+            episodes = request.Episodes,
+            language = request.Language,
+            provider = request.Provider,
+            title = request.Title,
+            series_url = request.SeriesUrl,
+            custom_path_id = customPathId,
+        };
+
+    private static AniWorldException InvalidCustomPaths()
+        => new(
+            HttpStatusCode.BadGateway,
+            "AniWorld hat keine gültigen Downloadpfade geliefert. Es wurde nichts eingereiht, damit kein falscher Speicherort verwendet wird.");
 
     private Task<JsonElement> GetWithUrlAsync(string path, string url, CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, $"{path}?url={Uri.EscapeDataString(url)}", null, cancellationToken);
