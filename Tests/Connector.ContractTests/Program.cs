@@ -20,6 +20,7 @@ var tests = new (string Name, Action Run)[]
     ("partial queues do not request a library scan", PartialQueueDoesNotRequestScan),
     ("completed queue with failed episodes is partial", CompletedQueueWithErrorsIsPartial),
     ("pending library scan survives a restart", PendingLibraryScanSurvivesRestart),
+    ("legacy virtual-folder scans are retried once", LegacyVirtualFolderScansAreRetriedOnce),
 };
 
 var failed = 0;
@@ -254,6 +255,26 @@ static void PendingLibraryScanSurvivesRestart()
             Directory.Delete(directory, recursive: true);
         }
     }
+}
+
+static void LegacyVirtualFolderScansAreRetriedOnce()
+{
+    WithRequestStore(async store =>
+    {
+        var requestId = await AddQueuedRequestAsync(store, "movie", 46);
+        await store.SyncQueueStatesForAllAsync(
+            new Dictionary<long, string> { [46] = RequestStatuses.Completed },
+            CancellationToken.None);
+        await store.MarkLibraryScansTriggeredAsync([requestId], CancellationToken.None);
+        Equal(0, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
+
+        await store.RequeueLegacyLibraryScansAsync(CancellationToken.None);
+        Equal(requestId, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Single().Id);
+
+        await store.MarkLibraryScansTriggeredAsync([requestId], CancellationToken.None);
+        await store.RequeueLegacyLibraryScansAsync(CancellationToken.None);
+        Equal(0, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
+    });
 }
 
 static async Task<long> AddQueuedRequestAsync(RequestStore store, string mediaType, long queueId)

@@ -10,7 +10,7 @@ Das Plugin kommuniziert direkt mit der REST-API des [AniWorld-Downloader-Forks](
 - **Genehmigungs-System:** Benutzer können Inhalte anfragen, welche von Admins mit einem Klick freigegeben werden. Alternativ ist ein Modus für automatische Freigaben (Direct-Download) verfügbar.
 - **Echtzeit-Synchronisation:** Das Plugin überwacht den Download-Status im AniWorld-Downloader und zeigt dir den Ladebalken live in Jellyfin an.
 - **Downloadpfade:** Beim Einreihen wird der in AniWorld für die jeweilige Quelle festgelegte Standardpfad übernommen. Ohne Seitenstandard gilt der allgemeine AniWorld-Downloadpfad.
-- **Automatischer Bibliotheksscan:** Nach vollständig erfolgreichen Downloads aktualisiert das Plugin auch ohne geöffnete Jellyfin-Seite die Film- bzw. Serienbibliotheken. Teilweise fehlgeschlagene Downloads lösen keinen Scan aus. Die AniWorld-Zielpfade müssen in den entsprechenden Jellyfin-Bibliotheken enthalten sein.
+- **Automatischer Bibliotheksscan:** Nach vollständig erfolgreichen Downloads startet das Plugin auch ohne geöffnete Jellyfin-Seite eine sichtbare Jellyfin-Aufgabe für die physischen Ordner der Film- bzw. Serienbibliotheken. Die Aufgaben heißen „AniWorld: Filmbibliotheken scannen“ und „AniWorld: Serienbibliotheken scannen“ und sind unter „Geplante Aufgaben“ zu finden. Bei einem fehlgeschlagenen Scan bleibt die Anfrage zur Wiederholung vorgemerkt; teilweise fehlgeschlagene Downloads lösen keinen Scan aus. Die AniWorld-Zielpfade müssen in den entsprechenden Jellyfin-Bibliotheken enthalten sein.
 
 ## Installation in Jellyfin
 

@@ -173,6 +173,37 @@ public sealed class RequestStore
         }
     }
 
+    /// <summary>
+    /// Retries scans that version 1.2.0 marked complete after only validating
+    /// a virtual collection folder, which did not reliably discover new files.
+    /// </summary>
+    public async Task RequeueLegacyLibraryScansAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_document.LibraryScanRevision >= 2)
+            {
+                return;
+            }
+
+            var document = CloneDocument();
+            foreach (var item in document.Requests.Where(item => item.Status == RequestStatuses.Completed
+                         && item.LibraryScanTriggeredUtc.HasValue))
+            {
+                item.LibraryScanPending = true;
+            }
+
+            document.LibraryScanRevision = 2;
+            await SaveLockedAsync(document, cancellationToken).ConfigureAwait(false);
+            _document = document;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<MediaRequest?> GetAsync(long id, CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -590,6 +621,8 @@ public sealed class RequestStore
     private sealed class StoreDocument
     {
         public long NextId { get; set; } = 1;
+
+        public int LibraryScanRevision { get; set; }
 
         public List<MediaRequest> Requests { get; set; } = [];
     }
