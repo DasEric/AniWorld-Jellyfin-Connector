@@ -10,6 +10,7 @@ $versionInfo = Get-Content -LiteralPath (Join-Path $projectRoot "version.json") 
 $version = [string]$versionInfo.version
 $versionFourPart = [string]$versionInfo.versionFourPart
 $targetAbi = [string]$versionInfo.targetAbi
+$metadata = Get-Content -LiteralPath (Join-Path $projectRoot "Jellyfin.Plugin.AniWorld\meta.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($version -notmatch '^\d+\.\d+\.\d+$' -or
     $versionFourPart -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
     $targetAbi -notmatch '^\d+\.\d+\.\d+\.\d+$') {
@@ -36,7 +37,7 @@ $checksum = (Get-FileHash -LiteralPath $archivePath -Algorithm MD5).Hash.ToUpper
 $sourceUrl = "https://github.com/$RepositorySlug/releases/download/$ReleaseTag/$archiveName"
     $currentVersion = [ordered]@{
         version = $versionFourPart
-        changelog = "Bugfixes für Discover, Suche und Fortschrittsbalken."
+        changelog = [string]$metadata.changelog
         targetAbi = $targetAbi
         sourceUrl = $sourceUrl
         checksum = $checksum

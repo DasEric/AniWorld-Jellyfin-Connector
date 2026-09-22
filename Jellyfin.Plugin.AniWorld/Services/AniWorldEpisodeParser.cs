@@ -12,7 +12,7 @@ internal static class AniWorldEpisodeParser
         Func<CancellationToken, Task<JsonElement>> fetch,
         Action<JsonElement> observe,
         int? fallbackSeasonNumber,
-        int expectedCount,
+        int? expectedCount,
         CancellationToken cancellationToken)
     {
         var actualCount = 0;
@@ -59,16 +59,28 @@ internal static class AniWorldEpisodeParser
             if (episode.ValueKind != JsonValueKind.Object
                 || !episode.TryGetProperty("url", out var urlValue)
                 || urlValue.ValueKind != JsonValueKind.String
-                || !MediaAccessGrantStore.TryNormalizeUrl(urlValue.GetString() ?? string.Empty, out var url)
-                || !seen.Add(url))
+                || !MediaAccessGrantStore.TryNormalizeUrl(urlValue.GetString() ?? string.Empty, out var url))
             {
                 throw InvalidEpisodeList();
             }
 
             var episodeNumber = ReadOptionalInt(episode, "episode_number");
             var seasonNumber = ReadOptionalInt(episode, "season_number") ?? fallbackSeasonNumber;
+            var pageNumber = ReadOptionalInt(episode, "page_number");
+            var chapterUrl = ReadOptionalUrl(episode, "chapter_url") ?? (pageNumber.HasValue ? url : null);
+            var identity = pageNumber is > 0 && chapterUrl is not null
+                ? $"{chapterUrl}#page-{pageNumber.Value}"
+                : url;
+            if (!seen.Add(identity))
+            {
+                throw InvalidEpisodeList();
+            }
+
             var languages = new HashSet<string>(StringComparer.Ordinal);
-            if (episode.TryGetProperty("languages", out var languageValues))
+            JsonElement languageValues = default;
+            var hasLanguages = episode.TryGetProperty("available_languages", out languageValues)
+                || episode.TryGetProperty("languages", out languageValues);
+            if (hasLanguages)
             {
                 if (languageValues.ValueKind != JsonValueKind.Array)
                 {
@@ -90,7 +102,13 @@ internal static class AniWorldEpisodeParser
                 }
             }
 
-            parsed.Add(new AniWorldEpisode(url, seasonNumber, episodeNumber, languages));
+            parsed.Add(new AniWorldEpisode(
+                url,
+                seasonNumber,
+                episodeNumber,
+                languages,
+                chapterUrl,
+                pageNumber));
         }
 
         return parsed;
@@ -117,6 +135,18 @@ internal static class AniWorldEpisodeParser
             : null;
     }
 
+    private static string? ReadOptionalUrl(JsonElement item, string name)
+    {
+        if (!item.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return MediaAccessGrantStore.TryNormalizeUrl(value.GetString() ?? string.Empty, out var normalized)
+            ? normalized
+            : throw InvalidEpisodeList();
+    }
+
     private static AniWorldException InvalidEpisodeList()
         => new(
             HttpStatusCode.BadGateway,
@@ -127,4 +157,6 @@ internal sealed record AniWorldEpisode(
     string Url,
     int? SeasonNumber,
     int? EpisodeNumber,
-    IReadOnlySet<string> Languages);
+    IReadOnlySet<string> Languages,
+    string? ChapterUrl,
+    int? PageNumber);

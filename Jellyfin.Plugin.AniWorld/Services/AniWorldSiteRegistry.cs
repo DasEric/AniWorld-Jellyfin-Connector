@@ -4,10 +4,9 @@ using Jellyfin.Plugin.AniWorld.Configuration;
 namespace Jellyfin.Plugin.AniWorld.Services;
 
 /// <summary>
-/// Statische Registry aller bekannten AniWorld-Sites.
-/// Da AniWorld keinen /sources-API-Endpunkt hat, werden die Sites
-/// hier definiert und über die Plugin-Konfiguration gefiltert.
-/// Neue Sites können jederzeit durch Erweiterung dieser Liste hinzugefügt werden.
+/// Statische Registry aller bekannten AniWorld-Sites. Die Registry liefert
+/// Bezeichnung und Medientypen; ob eine Quelle tatsächlich angezeigt werden
+/// darf, wird zusätzlich mit den aktuellen /api/settings abgeglichen.
 /// </summary>
 public static class AniWorldSiteRegistry
 {
@@ -21,9 +20,11 @@ public static class AniWorldSiteRegistry
         new("sto",            "Serienstream",   ["series"]),
         new("kinox",          "Kinox",          ["movie", "series"]),
         new("burningseries",  "BurningSeries",  ["series"]),
-        new("megakino",       "MegaKino",       ["movie"]),
+        new("megakino",       "MegaKino",       ["movie", "series"]),
         new("cineby",         "Cineby",         ["movie", "series"]),
         new("filmpalast",     "FilmPalast",     ["movie"]),
+        new("filmo",          "Filmo",          ["movie"]),
+        new("moflix",         "Moflix",         ["movie", "series"]),
         new("mangafire",      "MangaFire",      ["series"]),
         new("htv",            "HanimeTV",       ["series"]),
     ];

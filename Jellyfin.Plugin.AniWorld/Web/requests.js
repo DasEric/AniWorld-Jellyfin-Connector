@@ -46,6 +46,11 @@ export default function (view, params) {
     if (!message) return;
     const box = document.createElement('div'); box.className = 'mf-notice' + (error ? ' mf-error' : ''); box.textContent = message; q('notice').appendChild(box);
   }
+  function dialogNotice(message, error) {
+    const host = q('dialog-notice'); host.innerHTML = '';
+    if (!message) return;
+    const box = document.createElement('div'); box.className = 'mf-notice' + (error ? ' mf-error' : ''); box.textContent = message; host.appendChild(box);
+  }
   function switchTab(name) {
     state.tab = name;
     if (name !== 'mine') stopMinePolling();
@@ -207,7 +212,7 @@ export default function (view, params) {
     const rawUrl = item.url || item.link || item.series_url;
     if (!rawUrl) return notice('Der Treffer enthält keine AniWorld-URL.', true);
     const generation = ++detailGeneration;
-    state.source = source; state.detail = null; q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">Bestand in Jellyfin wird geprüft…</div>'; q('request').disabled = true;
+    state.source = source; state.detail = null; q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">Bestand in Jellyfin wird geprüft…</div>'; dialogNotice(''); q('request').textContent = 'Anfragen'; q('request').disabled = true;
     setOptions(q('language'), [state.status.defaultLanguage || 'German Dub'], state.status.defaultLanguage);
     setOptions(q('provider'), [state.status.defaultProvider || 'VOE'], state.status.defaultProvider);
     try {
@@ -255,24 +260,29 @@ export default function (view, params) {
           : 'Alle ' + plan.total_count + ' Episoden sind bereits vorhanden. Es wird nichts eingereiht.';
       }
       q('plan').appendChild(summary);
-    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { q('description').textContent = error.message; q('plan').innerHTML = ''; } }
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { q('description').textContent = error.message; q('plan').innerHTML = ''; dialogNotice(error.message, true); } }
   }
   function setOptions(select, values, preferred) { const clean = Array.from(new Set(values.filter(Boolean))); select.innerHTML = ''; clean.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = value; select.appendChild(option); }); if (clean.includes(preferred)) select.value = preferred; }
   q('request').addEventListener('click', async () => {
-    if (!state.detail || !state.detail.plan || !state.detail.plan.missing_count || !q('language').value || !q('provider').value) return;
+    if (!state.detail || !state.detail.plan || !state.detail.plan.missing_count || !q('language').value || !q('provider').value) {
+      dialogNotice('Die Anfrage ist noch nicht vollständig vorbereitet. Bitte den Titel schließen und erneut öffnen.', true);
+      return;
+    }
     const detail = state.detail;
     const generation = detailGeneration;
+    dialogNotice('Anfrage wird übermittelt…');
+    q('request').textContent = 'Wird übermittelt…';
     q('request').disabled = true;
     try {
       // upscale entfernt
-      const payload = { title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.plan.is_movie ? 'movie' : 'series', language: q('language').value, provider: q('provider').value };
+      const payload = { planToken: detail.plan.plan_token || '', title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.plan.is_movie ? 'movie' : 'series', language: q('language').value, provider: q('provider').value };
       const result = await call('Requests/Automatic', { method: 'POST', body: payload });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
       const message = result.status === 'queued' ? 'Nur die fehlenden Inhalte wurden direkt an AniWorld übergeben.' : 'Die Anfrage für die fehlenden Inhalte wurde an den Administrator gesendet.';
       closeDetail(); notice(message); switchTab('mine');
-    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) notice(error.message, true); } finally { if (!disposed && generation === detailGeneration && view.isConnected) q('request').disabled = !q('language').value || !q('provider').value; }
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) dialogNotice(error.message, true); } finally { if (!disposed && generation === detailGeneration && view.isConnected) { q('request').textContent = 'Anfragen'; q('request').disabled = !q('language').value || !q('provider').value; } }
   });
-  function closeDetail() { detailGeneration++; state.detail = null; q('overlay').style.display = 'none'; }
+  function closeDetail() { detailGeneration++; state.detail = null; dialogNotice(''); q('overlay').style.display = 'none'; }
   q('close').addEventListener('click', closeDetail); q('cancel').addEventListener('click', closeDetail); q('overlay').addEventListener('click', (e) => { if (e.target === q('overlay')) closeDetail(); });
 
   function stopMinePolling() {

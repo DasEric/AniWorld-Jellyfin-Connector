@@ -201,7 +201,7 @@ public sealed class RequestStore
         string title,
         string mediaType,
         string selectionLabel,
-        IReadOnlyList<string> episodes,
+        IReadOnlyList<AniWorldDownloadItem> episodes,
         CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);

@@ -2,7 +2,7 @@
 
 Dieses Plugin ermöglicht es Benutzern deines Jellyfin-Servers, direkt im Web-Interface nach Filmen und Serien auf AniWorld (und weiteren konfigurierten Providern) zu suchen und Download-Anfragen zu stellen. 
 
-Das Plugin kommuniziert direkt mit der REST-API des [AniWorld-Downloaders](https://github.com/phoenixthrush/AniWorld-Downloader) und leitet freigegebene Anfragen direkt an diesen weiter. Es durchsucht automatisch nur die Provider, die du auch im Downloader aktiv geschaltet hast!
+Das Plugin kommuniziert direkt mit der REST-API des [AniWorld-Downloader-Forks](https://github.com/DasEric/AniWorld-Downloader-priv-copy) und leitet freigegebene Anfragen direkt an diesen weiter. Im Connector werden ausschließlich Quellen angezeigt und akzeptiert, die in AniWorld selbst aktiviert sind. Kann dieser Status nicht sicher gelesen werden, zeigt der Connector vorsorglich keine Quellen an.
 
 ## Features
 - **Nahtlose Integration:** Klinkt sich direkt in die Seitenleiste des Jellyfin Web-Clients ein.
@@ -30,7 +30,7 @@ Damit das Plugin Downloads starten kann, muss es mit deinem AniWorld-Downloader 
 ### 1. API-Key im AniWorld-Downloader erstellen
 1. Öffne die Weboberfläche deines AniWorld-Downloaders.
 2. Gehe in die Einstellungen (Settings) zum Bereich **API Keys**.
-3. Erstelle einen neuen API-Key und gib ihm **volle Zugriffsrechte** (Full Access), da das Plugin die Warteschlange abfragen und Downloads starten können muss.
+3. Erstelle einen neuen API-Key und gib ihm **volle Zugriffsrechte** (Admin/Full Access). Diese Berechtigung wird benötigt, um Downloads zu starten und die in AniWorld aktivierten Quellen exakt zu übernehmen. Ein Read- oder Write-Key reicht für die vollständige Connector-Funktion nicht aus.
 4. Kopiere dir den erstellten API-Key.
 
 ### 2. Plugin in Jellyfin konfigurieren

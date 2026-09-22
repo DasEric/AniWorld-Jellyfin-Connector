@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -15,6 +16,7 @@ public sealed class AniWorldRequestApplicationService
     public const int MaxEpisodesPerRequest = 500;
     public const int MaxKnownSources = 32;
     private static readonly TimeSpan RateWindow = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan PlanLifetime = TimeSpan.FromMinutes(5);
     private readonly AniWorldClient _aniWorld;
     private readonly RequestStore _store;
     private readonly MediaAccessGrantStore _grants;
@@ -22,6 +24,7 @@ public sealed class AniWorldRequestApplicationService
     private readonly JellyfinLibraryAvailabilityService _libraryAvailability;
     private readonly JellixSelectionTokenStore _selectionTokens;
     private readonly Func<PluginConfiguration> _configuration;
+    private readonly ConcurrentDictionary<string, CachedMissingPlan> _plans = new(StringComparer.Ordinal);
 
     public AniWorldRequestApplicationService(
         AniWorldClient aniWorld,
@@ -60,8 +63,8 @@ public sealed class AniWorldRequestApplicationService
     }
 
     /// <summary>
-    /// Gibt die gefilterte Site-Liste zurück. Da AniWorld keinen /sources-Endpunkt hat,
-    /// wird die statische Registry verwendet und per Konfiguration gefiltert.
+    /// Gibt nur Sites zurück, die sowohl von diesem Connector unterstützt als auch
+    /// in den aktuellen AniWorld-Einstellungen ausdrücklich aktiviert sind.
     /// </summary>
     public async Task<IReadOnlyList<AniWorldSiteInfo>> GetAllowedSourcesAsync(
         string userId,
@@ -75,38 +78,60 @@ public sealed class AniWorldRequestApplicationService
 
         var configuredSources = AniWorldSiteRegistry.GetAllowedSites(CurrentConfiguration);
 
+        JsonElement settings;
         try
         {
-            var settings = await _aniWorld.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
-            var activeSourceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            
-            foreach (var site in configuredSources)
-            {
-                var settingKey = $"enable_{site.Id.ToLowerInvariant()}";
-                if (settings.TryGetProperty(settingKey, out var enableValue) &&
-                    enableValue.ValueKind == JsonValueKind.True)
-                {
-                    activeSourceIds.Add(site.Id);
-                }
-                else if (!settings.TryGetProperty(settingKey, out _))
-                {
-                    // Fallback
-                    activeSourceIds.Add(site.Id);
-                }
-            }
-            
-            var result = configuredSources.Where(s => activeSourceIds.Contains(s.Id)).ToList();
-            if (result.Count > 0)
-            {
-                return result;
-            }
+            settings = await _aniWorld.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (AniWorldException exception)
         {
-            // Ignore failure to fetch settings
+            throw new AniWorldApplicationException(
+                exception.UpstreamStatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                    ? HttpStatusCode.BadGateway
+                    : exception.StatusCode,
+                exception.UpstreamStatusCode switch
+                {
+                    HttpStatusCode.Forbidden => "Der AniWorld API-Key benötigt Admin-/Full-Access, damit der Connector ausschließlich die dort aktivierten Quellen anzeigen kann.",
+                    HttpStatusCode.Unauthorized => "Der AniWorld API-Key ist ungültig oder abgelaufen. Es werden keine Quellen angezeigt.",
+                    _ => "Die aktivierten AniWorld-Quellen konnten nicht gelesen werden. Es werden vorsorglich keine Quellen angezeigt.",
+                });
         }
 
-        return configuredSources;
+        if (settings.ValueKind != JsonValueKind.Object)
+        {
+            throw new AniWorldApplicationException(
+                HttpStatusCode.BadGateway,
+                "AniWorld hat keine gültigen Quelleinstellungen geliefert. Es werden vorsorglich keine Quellen angezeigt.");
+        }
+
+        return ReadEnabledSources(settings, configuredSources);
+    }
+
+    internal static IReadOnlyList<AniWorldSiteInfo> ReadEnabledSources(
+        JsonElement settings,
+        IReadOnlyList<AniWorldSiteInfo> configuredSources)
+    {
+        var advertised = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (settings.TryGetProperty("available_sites", out var availableSites)
+            && availableSites.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var site in availableSites.EnumerateArray())
+            {
+                if (site.ValueKind == JsonValueKind.Object
+                    && site.TryGetProperty("key", out var key)
+                    && key.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(key.GetString()))
+                {
+                    advertised.Add(key.GetString()!.Trim());
+                }
+            }
+        }
+
+        return configuredSources
+            .Where(site => (advertised.Count == 0 || advertised.Contains(site.Id))
+                && settings.TryGetProperty($"enable_{site.Id.ToLowerInvariant()}", out var enabled)
+                && enabled.ValueKind == JsonValueKind.True)
+            .ToArray();
     }
 
     public async Task<AniWorldSearchResponse> SearchAsync(
@@ -284,12 +309,13 @@ public sealed class AniWorldRequestApplicationService
             throw TooManyRequests();
         }
 
-        if (!SourceIsAllowed(request.Source, request.MediaType))
+        if (!await SourceIsAllowedAsync(userId, request.Source, request.MediaType, cancellationToken).ConfigureAwait(false))
         {
             throw SourceNotAllowed();
         }
 
-        return await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant).ConfigureAwait(false);
+        var plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant).ConfigureAwait(false);
+        return CachePlan(userId, request, plan);
     }
 
     public async Task<SubmitMediaRequestResult> SubmitSelectionAsync(
@@ -483,19 +509,27 @@ public sealed class AniWorldRequestApplicationService
             throw TooManyRequests();
         }
 
-        if (!SourceIsAllowed(request.Source, request.MediaType))
+        if (!await SourceIsAllowedAsync(userId, request.Source, request.MediaType, cancellationToken).ConfigureAwait(false))
         {
             throw SourceNotAllowed();
         }
 
-        var plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant).ConfigureAwait(false);
+        MissingMediaPlan plan;
+        if (!string.IsNullOrWhiteSpace(request.PlanToken))
+        {
+            plan = ConsumePlan(userId, request);
+        }
+        else
+        {
+            plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant).ConfigureAwait(false);
+        }
         if (expectedMediaType is not null
             && !string.Equals(plan.IsMovie ? "movie" : "series", expectedMediaType, StringComparison.Ordinal))
         {
             throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Der gefundene Medientyp stimmt nicht mit der Auswahl überein.");
         }
 
-        if (plan.MissingUrls.Count == 0)
+        if (plan.MissingItems.Count == 0)
         {
             return new SubmitMediaRequestResult(SubmitDisposition.AlreadyAvailable, null, null, 0);
         }
@@ -513,7 +547,7 @@ public sealed class AniWorldRequestApplicationService
             Source = request.Source,
             MediaType = plan.IsMovie ? "movie" : "series",
             SelectionLabel = plan.SelectionLabel,
-            Episodes = plan.MissingUrls.ToList(),
+            Episodes = plan.MissingItems.ToList(),
             Language = downloadOptions.Language,
             Provider = downloadOptions.Provider,
         };
@@ -571,7 +605,11 @@ public sealed class AniWorldRequestApplicationService
             ?? throw new InvalidOperationException("Claimed request disappeared.");
         try
         {
-            if (!SourceIsAllowed(request.Source, request.MediaType))
+            if (!await SourceIsAllowedAsync(
+                    request.UserId,
+                    request.Source,
+                    request.MediaType,
+                    cancellationToken).ConfigureAwait(false))
             {
                 throw SourceNotAllowed();
             }
@@ -589,7 +627,7 @@ public sealed class AniWorldRequestApplicationService
                     },
                     cancellationToken,
                     requireGrant: false).ConfigureAwait(false);
-                if (refreshedPlan.MissingUrls.Count == 0)
+                if (refreshedPlan.MissingItems.Count == 0)
                 {
                     await _store.MarkAvailableAsync(id, decidedBy, CancellationToken.None).ConfigureAwait(false);
                     return await _store.GetAsync(id, CancellationToken.None).ConfigureAwait(false) ?? request;
@@ -606,7 +644,7 @@ public sealed class AniWorldRequestApplicationService
                         refreshedPlan.Title,
                         refreshedPlan.IsMovie ? "movie" : "series",
                         refreshedPlan.SelectionLabel,
-                        refreshedPlan.MissingUrls,
+                        refreshedPlan.MissingItems,
                         CancellationToken.None).ConfigureAwait(false))
                 {
                     return await _store.GetAsync(id, CancellationToken.None).ConfigureAwait(false) ?? request;
@@ -637,13 +675,20 @@ public sealed class AniWorldRequestApplicationService
     }
 
     /// <summary>
-    /// Prüft ob eine Site für den angegebenen Medientyp erlaubt ist.
-    /// Da AniWorld keinen asynchronen /sources-Endpunkt hat, ist dies synchron.
+    /// Prüft anhand der aktuellen AniWorld-Einstellungen, ob eine Site aktiviert
+    /// und für den angegebenen Medientyp erlaubt ist.
     /// </summary>
-    private bool SourceIsAllowed(string source, string? mediaType)
+    private async Task<bool> SourceIsAllowedAsync(
+        string userId,
+        string source,
+        string? mediaType,
+        CancellationToken cancellationToken)
     {
         var normalizedType = NormalizeMediaType(mediaType);
-        var sources = AniWorldSiteRegistry.GetAllowedSites(CurrentConfiguration);
+        var sources = await GetAllowedSourcesAsync(
+            userId,
+            cancellationToken,
+            applyRateLimit: false).ConfigureAwait(false);
         return sources.Any(item =>
             string.Equals(item.Id, source, StringComparison.OrdinalIgnoreCase)
             && (normalizedType is null || item.MediaTypes.Contains(normalizedType, StringComparer.Ordinal)));
@@ -678,14 +723,6 @@ public sealed class AniWorldRequestApplicationService
         }
 
         var description = ReadJsonString(detail, "description", 4000);
-        var isMovie = detail.TryGetProperty("is_movie", out var movieValue)
-            ? movieValue.ValueKind == JsonValueKind.True
-            : request.MediaType == "movie";
-        var libraryState = _libraryAvailability.GetAvailability(new LibraryMediaIdentity(
-            title,
-            ReadReleaseYear(detail),
-            isMovie,
-            ReadProviderIds(detail)));
         if (seasonsResponse.ValueKind != JsonValueKind.Object
             || !seasonsResponse.TryGetProperty("seasons", out var seasons)
             || seasons.ValueKind != JsonValueKind.Array)
@@ -704,7 +741,24 @@ public sealed class AniWorldRequestApplicationService
             throw new AniWorldApplicationException(HttpStatusCode.NotFound, "Für diesen Titel wurden keine verfügbaren Inhalte gefunden.");
         }
 
-        var missing = new List<string>();
+        var hasExplicitMediaType = detail.TryGetProperty("is_movie", out var movieValue)
+            && movieValue.ValueKind is JsonValueKind.True or JsonValueKind.False;
+        var isMovie = hasExplicitMediaType
+            ? movieValue.ValueKind == JsonValueKind.True
+            : seasonItems.All(season => season.ValueKind == JsonValueKind.Object
+                && season.TryGetProperty("are_movies", out var areMovies)
+                && areMovies.ValueKind == JsonValueKind.True)
+                || (request.MediaType == "movie"
+                    && !seasonItems.Any(season => season.ValueKind == JsonValueKind.Object
+                        && season.TryGetProperty("are_movies", out var areMovies)
+                        && areMovies.ValueKind == JsonValueKind.False));
+        var libraryState = _libraryAvailability.GetAvailability(new LibraryMediaIdentity(
+            title,
+            ReadReleaseYear(detail),
+            isMovie,
+            ReadProviderIds(detail)));
+
+        var missing = new List<AniWorldDownloadItem>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         HashSet<string>? languages = null;
         var total = 0;
@@ -725,14 +779,17 @@ public sealed class AniWorldRequestApplicationService
 
             _grants.GrantUrl(userId, request.Source, normalizedSeasonUrl);
             var seasonEpisodes = await AniWorldEpisodeParser.FetchCompleteAsync(
-                token => _aniWorld.GetEpisodesAsync(normalizedSeasonUrl, token),
+                token => _aniWorld.GetEpisodesAsync(normalizedSeasonUrl, request.SeriesUrl, token),
                 response => _grants.GrantFromJson(userId, request.Source, response),
                 seasonNumber,
                 expectedEpisodeCount,
                 cancellationToken).ConfigureAwait(false);
             foreach (var episode in seasonEpisodes)
             {
-                if (!seen.Add(episode.Url))
+                var episodeIdentity = episode.PageNumber is > 0 && episode.ChapterUrl is not null
+                    ? $"{episode.ChapterUrl}#page-{episode.PageNumber.Value}"
+                    : episode.Url;
+                if (!seen.Add(episodeIdentity))
                 {
                     throw new AniWorldApplicationException(HttpStatusCode.BadGateway, "AniWorld hat doppelte Episoden-URLs geliefert. Es wurde nichts eingereiht.");
                 }
@@ -765,7 +822,13 @@ public sealed class AniWorldRequestApplicationService
                     }
                 }
 
-                missing.Add(episode.Url);
+                missing.Add(episode.PageNumber is > 0 && episode.ChapterUrl is not null
+                    ? new AniWorldDownloadItem(episode.ChapterUrl)
+                    {
+                        SeriesUrl = request.SeriesUrl,
+                        SelectedPages = [episode.PageNumber.Value],
+                    }
+                    : new AniWorldDownloadItem(episode.Url));
                 if (missing.Count > MaxEpisodesPerRequest)
                 {
                     throw new AniWorldApplicationException(
@@ -780,10 +843,45 @@ public sealed class AniWorldRequestApplicationService
             throw new AniWorldApplicationException(HttpStatusCode.NotFound, "Für diesen Titel wurden keine verfügbaren Episoden gefunden.");
         }
 
-        var selectionLabel = isMovie ? "Film" : missing.Count == 1 ? "1 fehlende Episode" : $"{missing.Count} fehlende Episoden";
-        var providerOptions = missing.Count == 0
-            ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
-            : await ReadProviderOptionsAsync(userId, request.Source, missing[0], cancellationToken).ConfigureAwait(false);
+        var isMangaFire = string.Equals(request.Source, "mangafire", StringComparison.OrdinalIgnoreCase);
+        if (isMangaFire && missing.Count > 0)
+        {
+            languages = new HashSet<string>(["MangaFire"], StringComparer.OrdinalIgnoreCase);
+        }
+
+        var selectionLabel = isMovie
+            ? "Film"
+            : isMangaFire
+                ? missing.Count == 1 ? "1 fehlende Seite" : $"{missing.Count} fehlende Seiten"
+                : missing.Count == 1 ? "1 fehlende Episode" : $"{missing.Count} fehlende Episoden";
+        IReadOnlyDictionary<string, IReadOnlyList<string>> providerOptions;
+        if (missing.Count == 0)
+        {
+            providerOptions = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        }
+        else if (isMangaFire)
+        {
+            providerOptions = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["MangaFire"] = ["MangaFire"],
+            };
+        }
+        else if (string.Equals(request.Source, "htv", StringComparison.OrdinalIgnoreCase))
+        {
+            providerOptions = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Japanese"] = ["HanimeTV"],
+            };
+        }
+        else
+        {
+            providerOptions = await ReadProviderOptionsAsync(
+                userId,
+                request.Source,
+                missing[0].Url,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         var providers = FilterProviderOptions(providerOptions, languages);
         return new MissingMediaPlan(
             title,
@@ -793,18 +891,19 @@ public sealed class AniWorldRequestApplicationService
             missing,
             selectionLabel,
             languages is null ? [] : languages.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-            providers);
+            providers,
+            string.Empty);
     }
 
-    internal static int ReadExpectedEpisodeCount(JsonElement season)
+    internal static int? ReadExpectedEpisodeCount(JsonElement season)
     {
         var count = ReadOptionalInt(season, "episode_count");
-        if (!count.HasValue || count.Value < 0)
+        if (count.HasValue && count.Value < 0)
         {
             throw InvalidSeasonList();
         }
 
-        return count.Value;
+        return count;
     }
 
     private async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ReadProviderOptionsAsync(
@@ -1060,12 +1159,13 @@ public sealed class AniWorldRequestApplicationService
             || request.MediaType.Length > 20
             || request.Language.Length > 100
             || request.Provider.Length > 100
+            || request.PlanToken.Length > 128
             || !MediaAccessGrantStore.TryNormalizeUrl(request.SeriesUrl, out _))
         {
             return "Die Anfrage enthält ungültige oder zu lange Werte.";
         }
 
-        if (new[] { request.Title, request.Source, request.MediaType, request.Language, request.Provider }
+        if (new[] { request.Title, request.Source, request.MediaType, request.Language, request.Provider, request.PlanToken }
             .Any(value => value.Any(char.IsControl)))
         {
             return "Die Anfrage enthält ungültige Steuerzeichen.";
@@ -1082,6 +1182,7 @@ public sealed class AniWorldRequestApplicationService
         request.MediaType = NormalizeMediaType(request.MediaType) ?? "series";
         request.Language = request.Language?.Trim() ?? string.Empty;
         request.Provider = request.Provider?.Trim() ?? string.Empty;
+        request.PlanToken = request.PlanToken?.Trim() ?? string.Empty;
     }
 
     private static IReadOnlyList<SearchCandidate> ReadSearchCandidates(JsonElement data, string source, string expectedMediaType)
@@ -1269,9 +1370,64 @@ public sealed class AniWorldRequestApplicationService
         return string.IsNullOrWhiteSpace(clean) ? fallback : clean;
     }
 
+    private MissingMediaPlan CachePlan(string userId, AutomaticMediaRequest request, MissingMediaPlan plan)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var expired in _plans.Where(pair => pair.Value.ExpiresUtc <= now).Select(pair => pair.Key).Take(100))
+        {
+            _plans.TryRemove(expired, out _);
+        }
+
+        var token = Guid.NewGuid().ToString("N");
+        var normalizedUrl = MediaAccessGrantStore.TryNormalizeUrl(request.SeriesUrl, out var normalized)
+            ? normalized
+            : request.SeriesUrl;
+        var cachedPlan = plan with { PlanToken = token };
+        _plans[token] = new CachedMissingPlan(
+            userId,
+            request.Source,
+            normalizedUrl,
+            now.Add(PlanLifetime),
+            cachedPlan);
+        return cachedPlan;
+    }
+
+    private MissingMediaPlan ConsumePlan(string userId, AutomaticMediaRequest request)
+    {
+        if (!_plans.TryRemove(request.PlanToken, out var cached)
+            || cached.ExpiresUtc <= DateTime.UtcNow)
+        {
+            throw new AniWorldApplicationException(
+                HttpStatusCode.BadRequest,
+                "Der Anfrageplan ist abgelaufen. Bitte den Titel schließen und erneut öffnen.");
+        }
+
+        var normalizedUrl = MediaAccessGrantStore.TryNormalizeUrl(request.SeriesUrl, out var normalized)
+            ? normalized
+            : request.SeriesUrl;
+        if (!string.Equals(cached.UserId, userId, StringComparison.Ordinal)
+            || !string.Equals(cached.Source, request.Source, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(cached.SeriesUrl, normalizedUrl, StringComparison.Ordinal)
+            || !string.Equals(cached.Plan.IsMovie ? "movie" : "series", request.MediaType, StringComparison.Ordinal))
+        {
+            throw new AniWorldApplicationException(
+                HttpStatusCode.BadRequest,
+                "Der Anfrageplan passt nicht mehr zur gewählten Auswahl. Bitte den Titel erneut öffnen.");
+        }
+
+        return cached.Plan;
+    }
+
     private PluginConfiguration CurrentConfiguration => _configuration() ?? new PluginConfiguration();
 
     private sealed record SearchCandidate(string Title, string Year, string Source, string Url, string MediaType);
+
+    private sealed record CachedMissingPlan(
+        string UserId,
+        string Source,
+        string SeriesUrl,
+        DateTime ExpiresUtc,
+        MissingMediaPlan Plan);
 }
 
 public sealed class AniWorldApplicationException : Exception
@@ -1318,10 +1474,11 @@ public sealed record MissingMediaPlan(
     string Description,
     bool IsMovie,
     int TotalCount,
-    IReadOnlyList<string> MissingUrls,
+    IReadOnlyList<AniWorldDownloadItem> MissingItems,
     string SelectionLabel,
     IReadOnlyList<string> Languages,
-    IReadOnlyDictionary<string, IReadOnlyList<string>> Providers)
+    IReadOnlyDictionary<string, IReadOnlyList<string>> Providers,
+    string PlanToken)
 {
     public MissingPlanResponse ToResponse()
         => new(
@@ -1329,11 +1486,12 @@ public sealed record MissingMediaPlan(
             Description,
             IsMovie,
             TotalCount,
-            TotalCount - MissingUrls.Count,
-            MissingUrls.Count,
+            TotalCount - MissingItems.Count,
+            MissingItems.Count,
             SelectionLabel,
             Languages,
-            Providers);
+            Providers,
+            PlanToken);
 }
 
 public sealed record MissingPlanResponse(
@@ -1345,7 +1503,8 @@ public sealed record MissingPlanResponse(
     [property: JsonPropertyName("missing_count")] int MissingCount,
     [property: JsonPropertyName("selection_label")] string SelectionLabel,
     [property: JsonPropertyName("languages")] IReadOnlyList<string> Languages,
-    [property: JsonPropertyName("providers")] IReadOnlyDictionary<string, IReadOnlyList<string>> Providers);
+    [property: JsonPropertyName("providers")] IReadOnlyDictionary<string, IReadOnlyList<string>> Providers,
+    [property: JsonPropertyName("plan_token")] string PlanToken);
 
 public enum SubmitDisposition
 {

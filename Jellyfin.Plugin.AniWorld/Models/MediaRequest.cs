@@ -58,13 +58,13 @@ public sealed class MediaRequest
     public string? Error { get; set; }
 
     [JsonPropertyName("episodes")]
-    public IReadOnlyList<string> Episodes
+    public IReadOnlyList<AniWorldDownloadItem> Episodes
     {
         get
         {
             try
             {
-                return JsonSerializer.Deserialize<List<string>>(EpisodesJson) ?? [];
+                return JsonSerializer.Deserialize<List<AniWorldDownloadItem>>(EpisodesJson) ?? [];
             }
             catch (JsonException)
             {

@@ -38,9 +38,13 @@ public sealed class AniWorldClient
         _configuration = configuration;
     }
 
-    /// <summary>Prüft ob AniWorld erreichbar ist (GET /api/queue/counts → 200 = online).</summary>
+    /// <summary>Prüft ob AniWorld erreichbar ist.</summary>
     public Task<JsonElement> GetHealthAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/queue/counts", null, cancellationToken);
+
+    /// <summary>Lädt Identität, Version und Berechtigungsumfang des API-Keys.</summary>
+    public Task<JsonElement> GetIdentityAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/ping", null, cancellationToken);
 
     /// <summary>Lädt die Einstellungen von AniWorld (inkl. aktiver Provider).</summary>
     public Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
@@ -54,18 +58,27 @@ public sealed class AniWorldClient
             && IsValidBaseUrl(config.AniWorldUrl);
         if (!configured)
         {
-            return new AniWorldConnectionStatus(false, false, true);
+            return new AniWorldConnectionStatus(false, false, true, false, string.Empty, string.Empty);
         }
 
         try
         {
-            await GetHealthAsync(cancellationToken).ConfigureAwait(false);
-            return new AniWorldConnectionStatus(true, true, true);
+            var identity = await GetIdentityAsync(cancellationToken).ConfigureAwait(false);
+            var scope = identity.TryGetProperty("scope", out var scopeValue)
+                && scopeValue.ValueKind == JsonValueKind.String
+                ? scopeValue.GetString()?.Trim().ToLowerInvariant() ?? string.Empty
+                : string.Empty;
+            var version = identity.TryGetProperty("version", out var versionValue)
+                && versionValue.ValueKind == JsonValueKind.String
+                ? versionValue.GetString()?.Trim() ?? string.Empty
+                : string.Empty;
+            var canWrite = scope is "write" or "admin";
+            return new AniWorldConnectionStatus(true, true, true, canWrite, scope, version);
         }
         catch (AniWorldException exception)
         {
             var authenticationFailed = exception.UpstreamStatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
-            return new AniWorldConnectionStatus(false, true, !authenticationFailed);
+            return new AniWorldConnectionStatus(false, true, !authenticationFailed, false, string.Empty, string.Empty);
         }
     }
 
@@ -88,7 +101,22 @@ public sealed class AniWorldClient
 
     /// <summary>Lädt die Episodenliste einer Staffel.</summary>
     public Task<JsonElement> GetEpisodesAsync(string url, CancellationToken cancellationToken)
-        => GetWithUrlAsync("api/episodes", url, cancellationToken);
+        => GetEpisodesAsync(url, null, cancellationToken);
+
+    /// <summary>Lädt eine Staffel mit dem von einigen Quellen benötigten Serienkontext.</summary>
+    public Task<JsonElement> GetEpisodesAsync(
+        string url,
+        string? seriesUrl,
+        CancellationToken cancellationToken)
+    {
+        var path = $"api/episodes?url={Uri.EscapeDataString(url)}";
+        if (!string.IsNullOrWhiteSpace(seriesUrl))
+        {
+            path += $"&series_url={Uri.EscapeDataString(seriesUrl)}";
+        }
+
+        return SendAsync(HttpMethod.Get, path, null, cancellationToken);
+    }
 
     /// <summary>Lädt die verfügbaren Provider/Hoster für eine Episode.</summary>
     public Task<JsonElement> GetProvidersAsync(string url, CancellationToken cancellationToken)
@@ -416,7 +444,13 @@ public sealed record AniWorldImage(byte[] Data, string MediaType);
 public sealed record AniWorldQueueResult(long QueueId, int? AcceptedEpisodeCount);
 
 /// <summary>Sanitizierter Verbindungsstatus für interne Nutzung.</summary>
-public sealed record AniWorldConnectionStatus(bool Healthy, bool Configured, bool ApiKeyValid);
+public sealed record AniWorldConnectionStatus(
+    bool Healthy,
+    bool Configured,
+    bool ApiKeyValid,
+    bool CanWrite,
+    string Scope,
+    string Version);
 
 /// <summary>Fehler beim Kommunizieren mit AniWorld.</summary>
 public sealed class AniWorldException : Exception

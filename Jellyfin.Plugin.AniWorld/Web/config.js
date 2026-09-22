@@ -98,7 +98,7 @@ export default function (view) {
     target.textContent = 'Verbindung wird getestet…';
     try {
       const result = await connector('Admin/Test', 'POST', {});
-      target.textContent = result.ok ? 'Verbindung erfolgreich – ' + (result.version || '') : 'Unerwartete Antwort von AniWorld.';
+      target.textContent = result.ok ? 'Verbindung erfolgreich – ' + (result.version || '') + ' · Admin/Full Access' : 'Unerwartete Antwort von AniWorld.';
       target.style.color = '#52b54b';
     } catch (error) {
       target.textContent = await readErrorMessage(error);

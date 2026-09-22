@@ -23,7 +23,7 @@ public sealed class CreateMediaRequest
     public string SelectionLabel { get; set; } = string.Empty;
 
     [Required]
-    public List<string> Episodes { get; set; } = [];
+    public List<AniWorldDownloadItem> Episodes { get; set; } = [];
 
     [Required]
     [MaxLength(100)]
@@ -37,6 +37,9 @@ public sealed class CreateMediaRequest
 /// <summary>Payload für eine server-berechnete Anfrage mit nur fehlenden Inhalten.</summary>
 public sealed class AutomaticMediaRequest
 {
+    [MaxLength(128)]
+    public string PlanToken { get; set; } = string.Empty;
+
     [Required]
     [MaxLength(300)]
     public string Title { get; set; } = string.Empty;

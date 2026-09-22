@@ -72,7 +72,9 @@ public sealed class JellixBridge
                 healthy = status.Healthy,
                 configured = status.Configured,
                 apiKeyValid = status.ApiKeyValid,
-                version = ReadVersion(),
+                canWrite = status.CanWrite,
+                apiScope = status.Scope,
+                version = string.IsNullOrWhiteSpace(status.Version) ? ReadVersion() : status.Version,
             });
         }
         else

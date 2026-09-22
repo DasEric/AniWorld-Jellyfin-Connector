@@ -89,9 +89,9 @@ public sealed class AniWorldRequestsController : ControllerBase
                 applyRateLimit: false).ConfigureAwait(false);
             return Ok(new { sources });
         }
-        catch (AniWorldException exception)
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException)
         {
-            return AniWorldError(exception);
+            return ApplicationError(exception);
         }
     }
 
@@ -193,9 +193,9 @@ public sealed class AniWorldRequestsController : ControllerBase
 
             return Ok(new { rows });
         }
-        catch (AniWorldException exception)
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException)
         {
-            return AniWorldError(exception);
+            return ApplicationError(exception);
         }
     }
 
@@ -496,10 +496,24 @@ public sealed class AniWorldRequestsController : ControllerBase
     {
         try
         {
-            // AniWorld hat kein Connector-Modul und kein Scope-System.
-            // Wir prüfen einfach ob AniWorld erreichbar ist.
-            await _aniWorld.GetHealthAsync(cancellationToken).ConfigureAwait(false);
-            return Ok(new { ok = true, version = "AniWorld-Downloader" });
+            var identity = await _aniWorld.GetIdentityAsync(cancellationToken).ConfigureAwait(false);
+            var scope = identity.TryGetProperty("scope", out var scopeValue)
+                && scopeValue.ValueKind == JsonValueKind.String
+                ? scopeValue.GetString()?.Trim().ToLowerInvariant() ?? string.Empty
+                : string.Empty;
+            if (scope != "admin")
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new
+                {
+                    error = "Der AniWorld API-Key benötigt Admin-/Full-Access. Nur damit kann der Connector die in AniWorld aktivierten Quellen zuverlässig übernehmen.",
+                });
+            }
+
+            var version = identity.TryGetProperty("version", out var versionValue)
+                && versionValue.ValueKind == JsonValueKind.String
+                ? versionValue.GetString() ?? "AniWorld-Downloader"
+                : "AniWorld-Downloader";
+            return Ok(new { ok = true, version, scope });
         }
         catch (AniWorldException exception)
         {
@@ -581,12 +595,21 @@ public sealed class AniWorldRequestsController : ControllerBase
         }
 
         if (!SafeHttpUrl(request.SeriesUrl)
-            || request.Episodes.Any(url => !SafeHttpUrl(url)))
+            || request.Episodes.Any(item => item is null
+                || !SafeHttpUrl(item.Url)
+                || (!string.IsNullOrWhiteSpace(item.SeriesUrl) && !SafeHttpUrl(item.SeriesUrl))))
         {
             return "AniWorld-URLs müssen gültige HTTP- oder HTTPS-URLs sein.";
         }
 
-        if (request.Episodes.Distinct(StringComparer.Ordinal).Count() != request.Episodes.Count)
+        if (request.Episodes.Any(item => item.SelectedPages is not null
+                && (item.SelectedPages.Count is < 1 or > MaxEpisodesPerRequest
+                    || item.SelectedPages.Any(page => page <= 0)
+                    || item.SelectedPages.Distinct().Count() != item.SelectedPages.Count))
+            || request.Episodes
+                .Select(item => item.Url + "#" + string.Join(",", item.SelectedPages ?? Array.Empty<int>()))
+                .Distinct(StringComparer.Ordinal)
+                .Count() != request.Episodes.Count)
         {
             return "Die Episodenliste enthält Duplikate.";
         }
@@ -612,7 +635,13 @@ public sealed class AniWorldRequestsController : ControllerBase
         request.SelectionLabel = request.SelectionLabel?.Trim() ?? string.Empty;
         request.Language = request.Language?.Trim() ?? string.Empty;
         request.Provider = request.Provider?.Trim() ?? string.Empty;
-        request.Episodes = request.Episodes?.Select(url => url?.Trim() ?? string.Empty).ToList() ?? [];
+        request.Episodes ??= [];
+        foreach (var item in request.Episodes)
+        {
+            item.Url = item.Url?.Trim() ?? string.Empty;
+            item.SeriesUrl = string.IsNullOrWhiteSpace(item.SeriesUrl) ? null : item.SeriesUrl.Trim();
+            item.MangaFireFormat = string.IsNullOrWhiteSpace(item.MangaFireFormat) ? null : item.MangaFireFormat.Trim();
+        }
     }
 
     private static string SafeIdentity(string value)
@@ -833,7 +862,7 @@ public sealed class AniWorldRequestsController : ControllerBase
         return status is >= 400 and <= 599 ? status : StatusCodes.Status502BadGateway;
     }
 
-    internal static int ReadExpectedEpisodeCount(JsonElement season)
+    internal static int? ReadExpectedEpisodeCount(JsonElement season)
         => AniWorldRequestApplicationService.ReadExpectedEpisodeCount(season);
 
     private sealed record DiscoverItem(
