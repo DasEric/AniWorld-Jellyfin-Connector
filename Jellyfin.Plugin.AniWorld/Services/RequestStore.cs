@@ -141,6 +141,38 @@ public sealed class RequestStore
         }
     }
 
+    public async Task<IReadOnlyList<MediaRequest>> ListQueuedAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return _document.Requests
+                .Where(item => item.Status == RequestStatuses.Queued && item.AniWorldQueueId.HasValue)
+                .Select(item => Clone(item)!)
+                .ToArray();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<MediaRequest>> ListPendingLibraryScansAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return _document.Requests
+                .Where(item => item.Status == RequestStatuses.Completed && item.LibraryScanPending)
+                .Select(item => Clone(item)!)
+                .ToArray();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<MediaRequest?> GetAsync(long id, CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -290,6 +322,17 @@ public sealed class RequestStore
         string userId,
         IReadOnlyDictionary<long, string> queueStates,
         CancellationToken cancellationToken)
+        => await SyncQueueStatesCoreAsync(userId, queueStates, cancellationToken).ConfigureAwait(false);
+
+    public Task SyncQueueStatesForAllAsync(
+        IReadOnlyDictionary<long, string> queueStates,
+        CancellationToken cancellationToken)
+        => SyncQueueStatesCoreAsync(null, queueStates, cancellationToken);
+
+    private async Task SyncQueueStatesCoreAsync(
+        string? userId,
+        IReadOnlyDictionary<long, string> queueStates,
+        CancellationToken cancellationToken)
     {
         if (queueStates.Count == 0)
         {
@@ -299,10 +342,21 @@ public sealed class RequestStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!_document.Requests.Any(item =>
+                    (userId is null || item.UserId == userId)
+                    && item.Status == RequestStatuses.Queued
+                    && item.AniWorldQueueId.HasValue
+                    && queueStates.TryGetValue(item.AniWorldQueueId.Value, out var state)
+                    && (state is RequestStatuses.Completed or RequestStatuses.Partial
+                        or RequestStatuses.Failed or RequestStatuses.Cancelled)))
+            {
+                return;
+            }
+
             var document = CloneDocument();
             var changed = false;
             foreach (var item in document.Requests.Where(item =>
-                         item.UserId == userId
+                         (userId is null || item.UserId == userId)
                          && item.Status == RequestStatuses.Queued
                          && item.AniWorldQueueId.HasValue))
             {
@@ -326,6 +380,11 @@ public sealed class RequestStore
 
                 item.Status = status;
                 item.Error = error;
+                if (status == RequestStatuses.Completed)
+                {
+                    item.LibraryScanPending = true;
+                }
+
                 changed = true;
             }
 
@@ -334,6 +393,45 @@ public sealed class RequestStore
                 await SaveLockedAsync(document, cancellationToken).ConfigureAwait(false);
                 _document = document;
             }
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task MarkLibraryScansTriggeredAsync(
+        IReadOnlyCollection<long> requestIds,
+        CancellationToken cancellationToken)
+    {
+        if (requestIds.Count == 0)
+        {
+            return;
+        }
+
+        var ids = requestIds.ToHashSet();
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!_document.Requests.Any(item => ids.Contains(item.Id)
+                    && item.Status == RequestStatuses.Completed
+                    && item.LibraryScanPending))
+            {
+                return;
+            }
+
+            var document = CloneDocument();
+            var triggeredUtc = DateTime.UtcNow;
+            foreach (var item in document.Requests.Where(item => ids.Contains(item.Id)
+                         && item.Status == RequestStatuses.Completed
+                         && item.LibraryScanPending))
+            {
+                item.LibraryScanPending = false;
+                item.LibraryScanTriggeredUtc = triggeredUtc;
+            }
+
+            await SaveLockedAsync(document, cancellationToken).ConfigureAwait(false);
+            _document = document;
         }
         finally
         {

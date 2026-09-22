@@ -16,6 +16,10 @@ var tests = new (string Name, Action Run)[]
     ("unrelated site path is not selected", UnrelatedSitePathIsNotSelected),
     ("invalid path response is rejected", InvalidPathResponseIsRejected),
     ("queue sends the site default path ID", QueueSendsSiteDefaultPathId),
+    ("completed queues request a library scan", CompletedQueueRequestsScan),
+    ("partial queues do not request a library scan", PartialQueueDoesNotRequestScan),
+    ("completed queue with failed episodes is partial", CompletedQueueWithErrorsIsPartial),
+    ("pending library scan survives a restart", PendingLibraryScanSurvivesRestart),
 };
 
 var failed = 0;
@@ -173,6 +177,123 @@ static void QueueSendsSiteDefaultPathId()
     Equal(7, body.RootElement.GetProperty("custom_path_id").GetInt32());
     Equal("https://example.test/movie", body.RootElement.GetProperty("series_url").GetString());
     Equal("https://example.test/movie", body.RootElement.GetProperty("episodes")[0].GetString());
+}
+
+static void CompletedQueueRequestsScan()
+{
+    WithRequestStore(async store =>
+    {
+        var requestId = await AddQueuedRequestAsync(store, "movie", 42);
+        await store.SyncQueueStatesForAllAsync(
+            new Dictionary<long, string> { [42] = "running" }, CancellationToken.None);
+        Equal(0, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
+
+        await store.SyncQueueStatesForAllAsync(
+            new Dictionary<long, string> { [42] = "completed" }, CancellationToken.None);
+        Equal(1, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
+        await store.MarkLibraryScansTriggeredAsync([requestId], CancellationToken.None);
+        Equal(0, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
+        True((await store.GetAsync(requestId, CancellationToken.None))?.LibraryScanTriggeredUtc is not null);
+    });
+}
+
+static void PartialQueueDoesNotRequestScan()
+{
+    WithRequestStore(async store =>
+    {
+        var requestId = await AddQueuedRequestAsync(store, "series", 43);
+        await store.SyncQueueStatesAsync(
+            "user",
+            new Dictionary<long, string> { [43] = "partial" }, CancellationToken.None);
+        Equal(0, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
+        Equal(RequestStatuses.Partial, (await store.GetAsync(requestId, CancellationToken.None))?.Status);
+    });
+}
+
+static void CompletedQueueWithErrorsIsPartial()
+{
+    using var document = JsonDocument.Parse(
+        """
+        {"items":[
+          {"id":42,"status":"completed","errors":"[]","total_episodes":2,"current_episode":2},
+          {"id":43,"status":"completed","errors":"[{\"url\":\"x\",\"error\":\"failed\"}]","total_episodes":2,"current_episode":2},
+          {"id":44,"status":"completed","total_episodes":2,"current_episode":2}
+        ]}
+        """);
+    var states = AniWorldRequestApplicationService.ReadProgress(document.RootElement, [42, 43, 44]);
+    Equal(2, states.Count);
+    Equal(RequestStatuses.Completed, states[0].Status);
+    Equal(RequestStatuses.Partial, states[1].Status);
+}
+
+static void PendingLibraryScanSurvivesRestart()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "aniworld-connector-contract-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var store = new RequestStore(directory);
+        var requestId = AddQueuedRequestAsync(store, "series", 45).GetAwaiter().GetResult();
+        store.SyncQueueStatesForAllAsync(
+            new Dictionary<long, string> { [45] = RequestStatuses.Completed },
+            CancellationToken.None).GetAwaiter().GetResult();
+
+        var reopened = new RequestStore(directory);
+        Equal(requestId, reopened.ListPendingLibraryScansAsync(CancellationToken.None)
+            .GetAwaiter().GetResult().Single().Id);
+        reopened.MarkLibraryScansTriggeredAsync([requestId], CancellationToken.None)
+            .GetAwaiter().GetResult();
+
+        var afterScan = new RequestStore(directory);
+        Equal(0, afterScan.ListPendingLibraryScansAsync(CancellationToken.None)
+            .GetAwaiter().GetResult().Count);
+    }
+    finally
+    {
+        if (Directory.Exists(directory))
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+}
+
+static async Task<long> AddQueuedRequestAsync(RequestStore store, string mediaType, long queueId)
+{
+    var result = await store.TryAddAsync(
+        "user",
+        "User",
+        new CreateMediaRequest
+        {
+            Title = "Example",
+            SeriesUrl = "https://example.test/title",
+            Source = "aniworld",
+            MediaType = mediaType,
+            Episodes = [new AniWorldDownloadItem("https://example.test/episode")],
+            Language = "German Dub",
+            Provider = "VOE",
+        },
+        RequestStatuses.Pending,
+        10,
+        CancellationToken.None);
+    var requestId = result.Request?.Id ?? throw new InvalidOperationException("Request was not stored.");
+    await store.MarkQueuedAsync(requestId, queueId, "test", CancellationToken.None);
+    return requestId;
+}
+
+static void WithRequestStore(Func<RequestStore, Task> action)
+{
+    var directory = Path.Combine(Path.GetTempPath(), "aniworld-connector-contract-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        action(new RequestStore(directory)).GetAwaiter().GetResult();
+    }
+    finally
+    {
+        // Only the unique directory created by this test is removed.
+        if (Directory.Exists(directory))
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }
 
 static void True(bool condition)

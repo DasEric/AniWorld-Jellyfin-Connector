@@ -7,10 +7,10 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
     <RootNamespace>Jellyfin.Plugin.AniWorld</RootNamespace>
-    <AssemblyVersion>1.1.1.0</AssemblyVersion>
-    <FileVersion>1.1.1.0</FileVersion>
-    <Version>1.1.1.0</Version>
-    <InformationalVersion>1.1.1</InformationalVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
+    <Version>1.2.0.0</Version>
+    <InformationalVersion>1.2.0</InformationalVersion>
     <Authors>Eric</Authors>
     <Product>AniWorld Requests</Product>
     <Description>Search AniWorld from Jellyfin and submit downloads through an approval workflow.</Description>

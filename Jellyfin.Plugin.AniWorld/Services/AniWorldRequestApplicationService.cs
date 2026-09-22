@@ -1088,6 +1088,11 @@ public sealed class AniWorldRequestApplicationService
 
         foreach (var item in items.EnumerateArray())
         {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
             if (!item.TryGetProperty("queue_id", out var queueIdValue) &&
                 !item.TryGetProperty("id", out queueIdValue))
             {
@@ -1118,6 +1123,21 @@ public sealed class AniWorldRequestApplicationService
                 continue;
             }
 
+            // This AniWorld fork can report "completed" even when some episodes
+            // failed. A library scan is safe only when its errors array is empty.
+            if (status == RequestStatuses.Completed)
+            {
+                if (!TryReadQueueErrors(item, out var hasErrors))
+                {
+                    continue;
+                }
+
+                if (hasErrors)
+                {
+                    status = RequestStatuses.Partial;
+                }
+            }
+
             var total = ReadBoundedInt(item, "total_episodes", 0, MaxEpisodesPerRequest);
             var current = ReadBoundedInt(item, "current_episode", 0, total > 0 ? total : MaxEpisodesPerRequest);
             
@@ -1141,6 +1161,42 @@ public sealed class AniWorldRequestApplicationService
         }
 
         return output;
+    }
+
+    private static bool TryReadQueueErrors(JsonElement item, out bool hasErrors)
+    {
+        hasErrors = false;
+        if (!item.TryGetProperty("errors", out var errors))
+        {
+            return false;
+        }
+
+        if (errors.ValueKind == JsonValueKind.Array)
+        {
+            hasErrors = errors.GetArrayLength() > 0;
+            return true;
+        }
+
+        if (errors.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(errors.GetString() ?? string.Empty);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            hasErrors = document.RootElement.GetArrayLength() > 0;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     internal static string? ValidateAutomaticRequest(AutomaticMediaRequest request, bool requireOptions)

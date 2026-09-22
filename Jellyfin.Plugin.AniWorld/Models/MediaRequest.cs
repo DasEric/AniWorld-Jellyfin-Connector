@@ -57,6 +57,12 @@ public sealed class MediaRequest
     [JsonPropertyName("error")]
     public string? Error { get; set; }
 
+    [JsonPropertyName("libraryScanPending")]
+    public bool LibraryScanPending { get; set; }
+
+    [JsonPropertyName("libraryScanTriggeredUtc")]
+    public DateTime? LibraryScanTriggeredUtc { get; set; }
+
     [JsonPropertyName("episodes")]
     public IReadOnlyList<AniWorldDownloadItem> Episodes
     {
