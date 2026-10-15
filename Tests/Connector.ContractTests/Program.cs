@@ -4,6 +4,12 @@ using Jellyfin.Plugin.AniWorld.Services;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("two search groups respect permissions", CatalogScenarios.TwoSearchGroupsRespectPermissions),
+    ("grouped search keeps films series manga and unknown types", CatalogScenarios.GroupedVideoSearchKeepsMixedAndUnknownTypes),
+    ("grouped discovery keeps missing types without downloader categories", CatalogScenarios.GroupedDiscoveryKeepsMissingTypes),
+    ("malformed search is an error, not no results", CatalogScenarios.MalformedSearchIsAnErrorNotNoResults),
+    ("catalog group uses only allowed concrete kinds", CatalogScenarios.CatalogGroupUsesOnlyAllowedKinds),
+    ("manga plan tokens retain their concrete request type", CatalogScenarios.MangaPlanRetainsConcreteType),
     ("MegaKino fork episode selectors remain distinct", CatalogScenarios.MegaKinoSelectorsStayDistinct),
     ("Gravity Falls rejects unrelated partial matches", CatalogScenarios.GravityFallsRelevance),
     ("aliases years authors and editions remain distinct", CatalogScenarios.AliasesYearsAndEditions),

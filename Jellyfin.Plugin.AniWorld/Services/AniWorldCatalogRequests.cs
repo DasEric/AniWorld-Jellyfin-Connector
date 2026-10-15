@@ -111,10 +111,11 @@ public sealed partial class AniWorldRequestApplicationService
 
     public async Task<IReadOnlyList<DiscoverySection>> DiscoverAsync(string userId, string category, string source, CancellationToken cancellationToken)
     {
-        if (!MediaCategories.IsAllowed(category, CurrentConfiguration))
+        var allowedTypes = MediaCategories.SearchTypes(category, CurrentConfiguration);
+        if (allowedTypes.Count == 0)
             throw new AniWorldApplicationException(HttpStatusCode.Forbidden, "Diese Kategorie ist deaktiviert.");
         var sources = (await GetAllowedSourcesAsync(userId, cancellationToken, applyRateLimit: false).ConfigureAwait(false))
-            .Where(item => item.MediaTypes.Contains(category, StringComparer.Ordinal) && (source == "all" || item.Id == source)).ToArray();
+            .Where(item => item.MediaTypes.Any(allowedTypes.Contains) && (source == "all" || item.Id == source)).ToArray();
         using var concurrency = new SemaphoreSlim(Math.Clamp(CurrentConfiguration.MaxSearchSources, 1, 4));
         return await Task.WhenAll(sources.Select(async info =>
         {
@@ -127,7 +128,7 @@ public sealed partial class AniWorldRequestApplicationService
                 {
                     try
                     {
-                        var data = await _aniWorld.BrowseAsync(path, info.Id, category, info.Backend == "catalog", cancellationToken).ConfigureAwait(false);
+                        var data = await _aniWorld.BrowseAsync(path, info.Id, info.Backend == "catalog", cancellationToken).ConfigureAwait(false);
                         var key = info.Backend == "catalog" ? "items" : "results";
                         if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty(key, out var values) || values.ValueKind != JsonValueKind.Array)
                         {
@@ -138,12 +139,14 @@ public sealed partial class AniWorldRequestApplicationService
                         {
                             if (ReadJsonString(value, "title", 300).Length == 0 && ReadJsonString(value, "name", 300).Length == 0) continue;
                             var kind = ReadJsonString(value, info.Backend == "catalog" ? "media_kind" : "media_type", 20);
+                            kind = MediaCategories.Normalize(kind) ?? string.Empty;
                             if (kind.Length == 0 && info.MediaTypes.Count == 1) kind = info.MediaTypes[0];
-                            if (MediaCategories.Normalize(kind) != category) continue;
+                            if (kind.Length == 0 ? info.Backend == "catalog" || category != "video" : !allowedTypes.Contains(kind) || !info.MediaTypes.Contains(kind)) continue;
                             var fields = value.EnumerateObject().ToDictionary(property => property.Name, property => (object)property.Value);
                             fields["source"] = info.Id;
                             fields["source_label"] = info.Label;
-                            fields["media_type"] = category;
+                            fields["media_type"] = kind;
+                            if (info.Backend == "catalog") fields["media_kind"] = kind;
                             if (info.Backend == "catalog")
                             {
                                 var id = ReadJsonString(value, "id", 2048);

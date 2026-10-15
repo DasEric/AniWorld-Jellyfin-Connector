@@ -187,16 +187,17 @@ public sealed partial class AniWorldRequestApplicationService
     {
         query = query?.Trim() ?? string.Empty;
         source = source?.Trim().ToLowerInvariant() ?? string.Empty;
-        var category = NormalizeMediaType(mediaType) ?? throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Ungültige Kategorie.");
+        var category = MediaCategories.NormalizeSearch(mediaType) ?? throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Ungültige Kategorie.");
         mediaType = category;
-        if (!MediaCategories.IsAllowed(mediaType, CurrentConfiguration))
+        var allowedTypes = MediaCategories.SearchTypes(category, CurrentConfiguration);
+        if (allowedTypes.Count == 0)
             throw new AniWorldApplicationException(HttpStatusCode.Forbidden, "Diese Kategorie ist in den Admin-Einstellungen deaktiviert.");
         if (query.Length is < 2 or > 120 || query.Any(char.IsControl))
         {
             throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Der Suchbegriff ist ungültig.");
         }
 
-        if (issueSelectionTokens && mediaType is null)
+        if (issueSelectionTokens && mediaType is not ("movie" or "series"))
         {
             throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Der Medientyp muss Film oder Serie sein.");
         }
@@ -211,7 +212,7 @@ public sealed partial class AniWorldRequestApplicationService
         var sources = sourcesTask.ToList();
         if (mediaType is not null)
         {
-            sources = sources.Where(item => item.MediaTypes.Contains(mediaType, StringComparer.Ordinal)).ToList();
+            sources = sources.Where(item => item.MediaTypes.Any(allowedTypes.Contains)).ToList();
         }
 
         if (!allSources)
@@ -235,14 +236,14 @@ public sealed partial class AniWorldRequestApplicationService
             try
             {
                 var data = item.Backend == "catalog"
-                    ? await _aniWorld.SearchCatalogAsync(query, item.Id, category, cancellationToken).ConfigureAwait(false)
-                    : await _aniWorld.SearchAsync(query, item.Id, mediaType, cancellationToken).ConfigureAwait(false);
-                data = SearchRelevance.Filter(data, query, mediaType);
+                    ? await _aniWorld.SearchCatalogAsync(query, item.Id, cancellationToken).ConfigureAwait(false)
+                    : await _aniWorld.SearchAsync(query, item.Id, cancellationToken).ConfigureAwait(false);
+                data = SearchRelevance.Filter(data, query, mediaType, item);
                 if (item.Backend == "catalog") GrantCatalogResults(userId, item.Id, data);
                 else _grants.GrantFromJson(userId, item.Id, data);
                 return new AniWorldSearchGroup(item.Id, item.Label, data, null);
             }
-            catch (AniWorldException exception)
+            catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException)
             {
                 return new AniWorldSearchGroup(item.Id, item.Label, null, exception.Message);
             }
@@ -1469,7 +1470,7 @@ public sealed partial class AniWorldRequestApplicationService
         if (!string.Equals(cached.UserId, userId, StringComparison.Ordinal)
             || !string.Equals(cached.Source, request.Source, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(cached.SeriesUrl, normalizedUrl, StringComparison.Ordinal)
-            || !string.Equals(cached.Plan.IsMovie ? "movie" : "series", request.MediaType, StringComparison.Ordinal))
+            || !string.Equals(request.Source == "mangafire" ? "manga" : cached.Plan.IsMovie ? "movie" : "series", request.MediaType, StringComparison.Ordinal))
         {
             throw new AniWorldApplicationException(
                 HttpStatusCode.BadRequest,

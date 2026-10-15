@@ -31,9 +31,29 @@ public static class MediaCategories
         "podcast" => config.AllowPodcastRequests, _ => false,
     };
 
-    public static IReadOnlyList<object> Available(PluginConfiguration config) => Labels
-        .Where(pair => IsAllowed(pair.Key, config))
-        .Select(pair => (object)new { id = pair.Key, label = pair.Value }).ToArray();
+    // Search groups are UI/API filters, never persisted request media types.
+    public static string? NormalizeSearch(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "video" => "video", "catalog" => "catalog", _ => Normalize(value),
+    };
+
+    public static IReadOnlyList<string> SearchTypes(string category, PluginConfiguration config) => Labels.Keys
+        .Where(kind => IsAllowed(kind, config) && Matches(category, kind)).ToArray();
+
+    public static bool Matches(string category, string kind) => category switch
+    {
+        "video" => kind is "movie" or "series" or "manga",
+        "catalog" => IsCatalog(kind),
+        _ => category == kind,
+    };
+
+    public static IReadOnlyList<object> Available(PluginConfiguration config) => new[]
+        {
+            (Id: "video", Label: "Serien & Filme"),
+            (Id: "catalog", Label: "Bücher & Audio"),
+        }
+        .Select(group => new { id = group.Id, label = group.Label, media_types = SearchTypes(group.Id, config) })
+        .Where(group => group.media_types.Count > 0).Cast<object>().ToArray();
 }
 
 /// <summary>All meaningful words must match a title/alias or a catalog author.</summary>
@@ -95,21 +115,40 @@ internal static class SearchRelevance
         return best;
     }
 
-    internal static JsonElement Filter(JsonElement response, string query, string? category)
+    internal static JsonElement Filter(JsonElement response, string query, string? category, AniWorldSiteInfo? source = null)
     {
         var key = response.ValueKind == JsonValueKind.Object && response.TryGetProperty("items", out _) ? "items" : "results";
         if (response.ValueKind != JsonValueKind.Object || !response.TryGetProperty(key, out var items) || items.ValueKind != JsonValueKind.Array)
-            return JsonSerializer.SerializeToElement(new { results = Array.Empty<object>() });
+            throw new AniWorldApplicationException(System.Net.HttpStatusCode.BadGateway, "Die Quelle hat keine gültige Trefferliste geliefert.");
+        if (response.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(error.GetString()))
+            throw new AniWorldApplicationException(System.Net.HttpStatusCode.BadGateway, "Die Quellensuche ist fehlgeschlagen.");
+        JsonElement? NormalizeItem(JsonElement item)
+        {
+            if (item.ValueKind != JsonValueKind.Object) return null;
+            if (source is null) return item;
+            var fields = item.EnumerateObject().ToDictionary(property => property.Name, property => (object)property.Value);
+            var field = source.Backend == "catalog" ? "media_kind" : "media_type";
+            var kind = item.TryGetProperty(field, out var raw) && raw.ValueKind == JsonValueKind.String ? MediaCategories.Normalize(raw.GetString()) : null;
+            if (kind is null && source.MediaTypes.Count == 1) kind = source.MediaTypes[0];
+            if (kind is not null && !source.MediaTypes.Contains(kind, StringComparer.Ordinal)) return null;
+            if (source.Backend == "catalog" && kind is null) return null;
+            fields[field] = kind ?? string.Empty;
+            fields["source"] = source.Id;
+            return JsonSerializer.SerializeToElement(fields);
+        }
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var filtered = items.EnumerateArray()
-            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(NormalizeItem).Where(item => item.HasValue).Select(item => item!.Value)
             .Select(item => (Item: item, Score: Score(item, query)))
             .Where(entry => entry.Score > 0)
             .Where(entry =>
             {
                 if (category is null) return true;
                 if (!entry.Item.TryGetProperty("media_type", out var kind) && !entry.Item.TryGetProperty("media_kind", out kind)) return true;
-                return kind.ValueKind == JsonValueKind.String && (string.IsNullOrWhiteSpace(kind.GetString()) || MediaCategories.Normalize(kind.GetString()) == category);
+                // Legacy responses may omit the concrete type. A grouped video
+                // search does not need a detail request for every result.
+                var normalized = kind.ValueKind == JsonValueKind.String ? MediaCategories.Normalize(kind.GetString()) : null;
+                return normalized is null || MediaCategories.Matches(category, normalized);
             })
             .OrderByDescending(entry => entry.Score)
             .ThenBy(entry => entry.Item.TryGetProperty("title", out var title) ? title.ToString() : string.Empty, StringComparer.OrdinalIgnoreCase)

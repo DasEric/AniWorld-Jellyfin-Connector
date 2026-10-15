@@ -158,6 +158,73 @@ internal static class CatalogScenarios
         Reject(() => AniWorldRequestApplicationService.ReadCatalogDetail(wrong.RootElement, "gutenberg", "42", "ebook"));
     }
 
+    internal static void TwoSearchGroupsRespectPermissions()
+    {
+        using var config = JsonDocument.Parse(JsonSerializer.Serialize(MediaCategories.Available(new PluginConfiguration())));
+        Check(config.RootElement.GetArrayLength() == 1);
+        Check(config.RootElement[0].GetProperty("id").GetString() == "video");
+        using var enabled = JsonDocument.Parse(JsonSerializer.Serialize(MediaCategories.Available(new PluginConfiguration { AllowEbookRequests = true })));
+        Check(enabled.RootElement.GetArrayLength() == 2);
+        Check(enabled.RootElement[1].GetProperty("id").GetString() == "catalog");
+    }
+
+    internal static void GroupedVideoSearchKeepsMixedAndUnknownTypes()
+    {
+        using var fixture = new Fixture();
+        var response = fixture.Application.SearchAsync("user", "gravity falls", "all", "video", false, CancellationToken.None).GetAwaiter().GetResult();
+        Check(response.Groups.Count == 3);
+        Check(response.Groups.All(group => group.Error is null && group.Data!.Value.GetProperty("results").GetArrayLength() > 0));
+        Check(response.Groups.Single(group => group.Source == "moflix").Data!.Value.GetProperty("results").GetArrayLength() == 3);
+        Check(fixture.VideoRequests.All(payload => !payload.TryGetProperty("category", out _)));
+    }
+
+    internal static void GroupedDiscoveryKeepsMissingTypes()
+    {
+        using var fixture = new Fixture { MissingBrowseTypes = true };
+        var sections = fixture.Application.DiscoverAsync("user", "video", "all", CancellationToken.None).GetAwaiter().GetResult();
+        Check(sections.Count == 3 && sections.All(section => section.Items.Count == 1));
+        Check(sections.Single(section => section.Source == "mangafire").Items[0].GetProperty("media_type").GetString() == "manga");
+        Check(sections.Single(section => section.Source == "moflix").Items[0].GetProperty("media_type").GetString() == string.Empty);
+        Check(fixture.BrowseQueries.All(query => !query.Contains("category=", StringComparison.Ordinal)));
+    }
+
+    internal static void MalformedSearchIsAnErrorNotNoResults()
+    {
+        using var fixture = new Fixture { MalformedSearch = true };
+        var response = fixture.Application.SearchAsync("user", "gravity falls", "sto", "series", false, CancellationToken.None).GetAwaiter().GetResult();
+        Check(response.Groups.Single().Error is not null);
+    }
+
+    internal static void CatalogGroupUsesOnlyAllowedKinds()
+    {
+        using var fixture = new Fixture();
+        var response = fixture.Application.SearchAsync("user", "Dune", "all", "catalog", false, CancellationToken.None).GetAwaiter().GetResult();
+        Check(response.Groups.Count == 2 && response.Groups.All(group => group.Error is null));
+        fixture.Config.AllowAudiobookRequests = true;
+        response = fixture.Application.SearchAsync("user", "Dune", "all", "catalog", false, CancellationToken.None).GetAwaiter().GetResult();
+        Check(response.Groups.Count == 3);
+        Check(response.Groups.Single(group => group.Source == "librivox").Data!.Value.GetProperty("results")[0].GetProperty("media_kind").GetString() == "audiobook");
+        fixture.Config.AllowEbookRequests = false;
+        response = fixture.Application.SearchAsync("user", "Dune", "all", "catalog", false, CancellationToken.None).GetAwaiter().GetResult();
+        Check(response.Groups.Count == 1 && response.Groups[0].Source == "librivox");
+        fixture.Config.AllowAudiobookRequests = false;
+        Reject(() => fixture.Application.SearchAsync("user", "Dune", "all", "catalog", false, CancellationToken.None).GetAwaiter().GetResult());
+    }
+
+    internal static void MangaPlanRetainsConcreteType()
+    {
+        using var fixture = new Fixture();
+        const string url = "https://mangafire.to/title/example";
+        fixture.Grants.GrantUrl("user", "mangafire", url);
+        var selection = new AutomaticMediaRequest { Title = "Example", Source = "mangafire", SeriesUrl = url, MediaType = "manga", Language = "MangaFire", Provider = "MangaFire" };
+        var plan = fixture.Application.PlanAsync("user", selection, true, false, CancellationToken.None).GetAwaiter().GetResult();
+        Check(!plan.IsMovie && plan.MissingItems.Count == 1);
+        selection.PlanToken = plan.PlanToken;
+        var submitted = fixture.Application.SubmitAutomaticAsync("user", "User", selection, true, CancellationToken.None).GetAwaiter().GetResult();
+        Check(submitted.Request!.MediaType == "manga" && submitted.Request.Status == "pending");
+        Check(submitted.Request.Episodes[0].SelectedPages!.SequenceEqual([1]));
+    }
+
     private static void Check(bool value)
     {
         if (!value) throw new InvalidOperationException("Catalog contract assertion failed.");
@@ -172,13 +239,15 @@ internal static class CatalogScenarios
 
     private sealed class Fixture : IDisposable
     {
-        internal const string Settings = """{"available_sites":[{"key":"sto"},{"key":"moflix"}],"enable_sto":true,"enable_moflix":true}""";
+        internal const string Settings = """{"available_sites":[{"key":"sto"},{"key":"moflix"},{"key":"mangafire"}],"enable_sto":true,"enable_moflix":true,"enable_mangafire":true}""";
         internal const string Sources = """
             {"schema_version":1,"sources":[
               {"id":"sto","label":"Serienstream","backend":"video","enabled":true,"media_types":["series"],"browse_paths":["api/new-series"]},
               {"id":"moflix","label":"Moflix","backend":"video","enabled":true,"media_types":["movie","series"],"browse_paths":["api/moflix-movies"]},
+              {"id":"mangafire","label":"MangaFire","backend":"video","enabled":true,"media_types":["manga"],"browse_paths":["api/mangafire-trending"]},
               {"id":"gutenberg","label":"Gutenberg","backend":"catalog","enabled":true,"media_types":["ebook"],"browse_paths":[]},
-              {"id":"standard_ebooks","label":"Standard Ebooks","backend":"catalog","enabled":true,"media_types":["ebook"],"browse_paths":[]}]}
+              {"id":"standard_ebooks","label":"Standard Ebooks","backend":"catalog","enabled":true,"media_types":["ebook"],"browse_paths":[]},
+              {"id":"librivox","label":"LibriVox","backend":"catalog","enabled":true,"media_types":["audiobook"],"browse_paths":[]}]}
             """;
         internal string Directory { get; } = Path.Combine(Path.GetTempPath(), "connector-catalog-" + Guid.NewGuid().ToString("N"));
         internal PluginConfiguration Config { get; } = new() { AniWorldUrl = "http://downloader.test/prefix", AllowEbookRequests = true };
@@ -189,6 +258,10 @@ internal static class CatalogScenarios
         internal int SearchCalls;
         internal bool AssetAvailable = true;
         internal bool FailMoflix;
+        internal bool MissingBrowseTypes;
+        internal bool MalformedSearch;
+        internal List<JsonElement> VideoRequests { get; } = [];
+        internal List<string> BrowseQueries { get; } = [];
         internal JsonElement LastPayload;
         private readonly HttpClient _http;
 
@@ -227,12 +300,32 @@ internal static class CatalogScenarios
             else if (path.EndsWith("/api/catalog/search", StringComparison.Ordinal))
             {
                 SearchCalls++;
-                data = new { items = new[] { new { id = "42", title = "Dune", media_kind = "ebook", author = "Frank Herbert" } } };
+                var kind = request.RequestUri.Query.Contains("source=librivox", StringComparison.Ordinal) ? "audiobook" : "ebook";
+                data = new { items = new[] { new { id = "42", title = "Dune", media_kind = kind, author = "Frank Herbert" } } };
             }
-            else if (path.EndsWith("/api/new-series", StringComparison.Ordinal) || path.EndsWith("/api/moflix-movies", StringComparison.Ordinal))
+            else if (path.EndsWith("/api/series", StringComparison.Ordinal))
+                data = new { title = "Example", description = "Manga" };
+            else if (path.EndsWith("/api/seasons", StringComparison.Ordinal))
+                data = new { seasons = new[] { new { url = "https://mangafire.to/title/example/chapter/1", season_number = 1, episode_count = 1, are_movies = false } } };
+            else if (path.EndsWith("/api/episodes", StringComparison.Ordinal))
+                data = new { episodes = new[] { new { url = "https://mangafire.to/title/example/chapter/1", chapter_url = "https://mangafire.to/title/example/chapter/1", episode_number = 1, page_number = 1 } } };
+            else if (path.EndsWith("/api/search", StringComparison.Ordinal))
             {
+                var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement.Clone();
+                lock (VideoRequests) VideoRequests.Add(payload);
+                data = MalformedSearch ? new { unexpected = true } : (object)new { results = new object[] {
+                    new { title = "Gravity Falls", url = "https://example.test/movie", media_type = "movie" },
+                    new { title = "Willkommen in Gravity Falls", url = "https://example.test/series", media_type = "series" },
+                    new { title = "Gravity Falls", url = "https://example.test/unknown" },
+                    new { title = "Cat Gravity", url = "https://example.test/unrelated" } } };
+            }
+            else if (path.EndsWith("/api/new-series", StringComparison.Ordinal) || path.EndsWith("/api/moflix-movies", StringComparison.Ordinal) || path.EndsWith("/api/mangafire-trending", StringComparison.Ordinal))
+            {
+                lock (BrowseQueries) BrowseQueries.Add(request.RequestUri.Query);
                 if (FailMoflix && path.EndsWith("/api/moflix-movies", StringComparison.Ordinal)) return new HttpResponseMessage(HttpStatusCode.BadGateway);
-                data = new { results = new[] { new { title = "Example", url = "https://example.test" + path, media_type = "series" } } };
+                data = MissingBrowseTypes
+                    ? new { results = new object[] { new { title = "Example", url = "https://example.test" + path } } }
+                    : (object)new { results = new[] { new { title = "Example", url = "https://example.test" + path, media_type = "series" } } };
             }
             else throw new InvalidOperationException("Unexpected upstream request: " + path);
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json") };

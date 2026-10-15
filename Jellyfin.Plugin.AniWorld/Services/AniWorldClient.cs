@@ -109,29 +109,26 @@ public sealed class AniWorldClient
 
     /// <summary>Sucht nach einem Suchbegriff auf einer bestimmten Site.</summary>
     public Task<JsonElement> SearchAsync(string keyword, string site, CancellationToken cancellationToken)
-        => SearchAsync(keyword, site, null, cancellationToken);
-
-    public Task<JsonElement> SearchAsync(string keyword, string site, string? category, CancellationToken cancellationToken)
         => SendAsync(
             HttpMethod.Post,
             "api/search",
-            new { keyword, site, category },
+            new { keyword, site },
             cancellationToken,
             SearchTimeout);
 
-    public Task<JsonElement> SearchCatalogAsync(string query, string source, string category, CancellationToken cancellationToken)
-        => SendAsync(HttpMethod.Get, $"api/catalog/search?source={Uri.EscapeDataString(source)}&q={Uri.EscapeDataString(query)}&category={Uri.EscapeDataString(category)}", null, cancellationToken, SearchTimeout);
+    public Task<JsonElement> SearchCatalogAsync(string query, string source, CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, $"api/catalog/search?source={Uri.EscapeDataString(source)}&q={Uri.EscapeDataString(query)}", null, cancellationToken, SearchTimeout);
 
     public Task<JsonElement> GetCatalogDetailsAsync(string source, string id, CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, $"api/catalog/details?source={Uri.EscapeDataString(source)}&id={Uri.EscapeDataString(id)}", null, cancellationToken);
 
-    public Task<JsonElement> BrowseAsync(string path, string source, string category, bool catalog, CancellationToken cancellationToken)
+    public Task<JsonElement> BrowseAsync(string path, string source, bool catalog, CancellationToken cancellationToken)
     {
         if (catalog)
-            return SendAsync(HttpMethod.Get, $"api/catalog/browse?source={Uri.EscapeDataString(source)}&category={Uri.EscapeDataString(category)}", null, cancellationToken, SearchTimeout);
+            return SendAsync(HttpMethod.Get, $"api/catalog/browse?source={Uri.EscapeDataString(source)}", null, cancellationToken, SearchTimeout);
         if (!System.Text.RegularExpressions.Regex.IsMatch(path, "^api/[a-z0-9-]+$"))
             throw new AniWorldException(HttpStatusCode.BadRequest, "Ungültiger Katalogpfad.");
-        return SendAsync(HttpMethod.Get, path + "?category=" + Uri.EscapeDataString(category), null, cancellationToken, SearchTimeout);
+        return SendAsync(HttpMethod.Get, path, null, cancellationToken, SearchTimeout);
     }
 
     public async Task<AniWorldQueueResult> QueueCatalogAsync(MediaRequest request, CancellationToken cancellationToken)

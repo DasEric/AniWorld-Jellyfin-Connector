@@ -1,16 +1,18 @@
 # AniWorld Requests (Jellyfin Plugin)
 
-## Version 1.3: Kategorien und H0melab Downloader
+## Version 1.3.1: gemeinsame Suche und H0melab Downloader
 
-Der Connector unterstützt deine H0melab-Downloader-Kopie ab **2.1.0** mit getrennten Kategorien für Filme, Serien/Anime und Manga. E-Books, Hörbücher und Podcasts können im Jellyfin-Plugin unabhängig freigegeben werden und sind zunächst ausgeschaltet. Diese Freigaben verändern nicht die eigenständige Downloader-Oberfläche.
+Der Connector bietet genau zwei Suchbereiche: **Serien & Filme** (einschließlich Anime und Manga) sowie **Bücher & Audio** (E-Books, Hörbücher und Podcasts). Eine Quellenauswahl ist nicht nötig: Alle passenden aktivierten und im Plugin erlaubten Quellen werden automatisch durchsucht. E-Books, Hörbücher und Podcasts können im Jellyfin-Plugin unabhängig freigegeben werden und sind zunächst ausgeschaltet; der zweite Bereich erscheint erst bei mindestens einer Freigabe.
 
-Die Suche berücksichtigt vollständige Suchbegriffe und sortiert Ergebnisse quellenübergreifend nach Relevanz. Die Startseite zeigt korrekt zugeordnete Bereiche aller passenden aktivierten Quellen. „Gleichzeitige Quellenabfragen“ begrenzt Parallelität; weitere Quellen werden nicht abgeschnitten.
+Für den korrigierten Suchablauf zuerst **H0melab Downloader 2.1.1** und danach **Connector 1.3.1** einsetzen. Die eigenständige Downloader-Oberfläche besitzt keine zusätzliche Kategorieauswahl; ihre bisherigen Quellenreiter und die Bücher-/Audio-Seite bleiben bestehen. Gruppierung und Relevanzprüfung erfolgen ausschließlich im Jellyfin-Connector.
+
+Die Suche berücksichtigt vollständige Suchbegriffe und sortiert Ergebnisse quellenübergreifend nach Relevanz. Fehlende Typmetadaten entfernen keine Treffer aus dem gemeinsamen Film-/Serien-/Manga-Bereich; der konkrete Typ wird bei Bedarf beim Öffnen ermittelt. Die Startseite zeigt korrekt zugeordnete Bereiche aller passenden aktivierten Quellen. „Gleichzeitige Quellenabfragen“ begrenzt Parallelität; weitere Quellen werden nicht abgeschnitten. Fehlerhafte Quellenantworten erscheinen als Fehler statt als leere Trefferliste.
 
 Kataloganfragen verwenden eine eigene Datei-/Formatauswahl. Abgeschlossene Buch-/Audiodownloads sind nicht automatisch ein Nachweis für Jellyfin-Verfügbarkeit und lösen keine Film-/Serienscans aus. Einzelheiten zu Einführung, Daten und Rückweg stehen im [Changelog](CHANGELOG.md).
 
 Dieses Plugin ermöglicht es Benutzern deines Jellyfin-Servers, direkt im Web-Interface nach Filmen und Serien auf AniWorld (und weiteren konfigurierten Providern) zu suchen und Download-Anfragen zu stellen. 
 
-Das Plugin kommuniziert direkt mit der REST-API des [AniWorld-Downloader-Forks](https://github.com/DasEric/AniWorld-Downloader-priv-copy) und leitet freigegebene Anfragen direkt an diesen weiter. Im Connector werden ausschließlich Quellen angezeigt und akzeptiert, die in AniWorld selbst aktiviert sind. Kann dieser Status nicht sicher gelesen werden, zeigt der Connector vorsorglich keine Quellen an.
+Das Plugin kommuniziert direkt mit der REST-API des [H0melab-Downloader-Forks](https://github.com/DasEric/H0melab-Downloader-V2) und leitet freigegebene Anfragen direkt an diesen weiter. Im Connector werden ausschließlich Quellen angezeigt und akzeptiert, die im Downloader selbst aktiviert sind. Bei nicht lesbaren Quelleinstellungen erscheint ein Verbindungsfehler.
 
 ## Features
 - **Nahtlose Integration:** Klinkt sich direkt in die Seitenleiste des Jellyfin Web-Clients ein.

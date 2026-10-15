@@ -14,14 +14,11 @@ export default function (view, params) {
   let detailGeneration = 0;
   let discoverGeneration = 0;
   const isCatalog = (category) => ['ebook', 'audiobook', 'podcast'].includes(category);
-  const categoryLabel = (category) => ((state.status.categories || []).find((item) => item.id === category) || {}).label || category;
-  function availableSources() { return state.sources.filter((item) => (item.media_types || []).includes(q('category').value)); }
-  function populateSources() {
-    q('source').replaceChildren();
-    const all = document.createElement('option'); all.value = 'all'; all.textContent = 'Alle passenden Quellen'; q('source').appendChild(all);
-    availableSources().forEach((item) => {
-      const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; q('source').appendChild(option);
-    });
+  const categoryLabel = (category) => ({ movie: 'Film', series: 'Serie / Anime', manga: 'Manga', ebook: 'E-Book', audiobook: 'Hörbuch', podcast: 'Podcast' })[category] || category;
+  function availableSources() {
+    const category = (state.status.categories || []).find((item) => item.id === q('category').value);
+    const types = category ? category.media_types || [] : [];
+    return state.sources.filter((item) => (item.media_types || []).some((kind) => types.includes(kind)));
   }
 
   function url(path, query) {
@@ -84,8 +81,7 @@ export default function (view, params) {
       (state.status.categories || []).forEach((item) => {
         const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; q('category').appendChild(option);
       });
-      if (Array.from(q('category').options).some((item) => item.value === 'series')) q('category').value = 'series';
-      populateSources();
+      if (Array.from(q('category').options).some((item) => item.value === 'video')) q('category').value = 'video';
       updatePlaceholder();
       await Promise.all([loadDiscover(), detectAdmin()]);
     } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); }
@@ -95,8 +91,7 @@ export default function (view, params) {
     const host = q('discover');
     const generation = ++discoverGeneration;
     const category = q('category').value;
-    const source = q('source').value;
-    const sources = availableSources().filter((item) => source === 'all' || item.id === source);
+    const sources = availableSources();
     host.replaceChildren();
     if (!sources.length) { host.innerHTML = '<div class="mf-empty">Keine freigegebene Quelle für diese Kategorie verfügbar.</div>'; return; }
     const rows = new Map();
@@ -114,7 +109,7 @@ export default function (view, params) {
         let definition;
         try {
           const data = await call('Discover', { query: { mediaType: category, source: item.id } });
-          definition = (data.sections || []).find((section) => section.source === item.id) || { items: [] };
+          definition = (data.sections || []).find((section) => section.source === item.id) || { items: [], error: 'Die Quelle hat keine gültige Empfehlungsantwort geliefert.' };
         } catch (error) { definition = { items: [], error: error.message }; }
         if (disposed || generation !== discoverGeneration || !view.isConnected) return;
         const row = rows.get(item.id); row.grid.replaceChildren();
@@ -142,20 +137,17 @@ export default function (view, params) {
     q('results').hidden = !searching;
     if (!searching) q('results').innerHTML = '';
   }
-  function updatePlaceholder() { q('query').placeholder = isCatalog(q('category').value) ? 'Titel oder Autor suchen' : 'Titel suchen, z. B. Gravity Falls'; }
+  function updatePlaceholder() { q('query').placeholder = q('category').value === 'catalog' ? 'Titel oder Autor suchen' : 'Serien, Filme, Anime oder Manga suchen'; }
   function resetSearch() { searchGeneration++; closeDetail(); q('results').replaceChildren(); q('query').value = ''; syncSearchMode(); notice(''); loadDiscover(); }
-  q('category').addEventListener('change', () => { populateSources(); updatePlaceholder(); resetSearch(); });
-  q('source').addEventListener('change', resetSearch);
+  q('category').addEventListener('change', () => { updatePlaceholder(); resetSearch(); });
   q('query').addEventListener('input', () => { searchGeneration++; closeDetail(); q('results').innerHTML = ''; syncSearchMode(); });
   q('search-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const generation = ++searchGeneration;
     const keyword = q('query').value.trim();
-    const selectedSource = q('source').value;
+    const category = q('category').value;
     const maximum = Math.max(1, Math.min(32, Number(state.status.maxSearchSources) || 8));
-    const sources = selectedSource === 'all'
-      ? availableSources()
-      : availableSources().filter((item) => item.id === selectedSource);
+    const sources = availableSources();
     syncSearchMode(); notice('');
     const host = q('results'); host.innerHTML = '';
     const pending = document.createElement('div'); pending.className = 'mf-empty'; pending.dataset.mfSearchPending = '1'; pending.textContent = 'Weitere Quellen werden durchsucht…'; host.appendChild(pending);
@@ -167,8 +159,9 @@ export default function (view, params) {
       const item = sources[nextSource++];
       let groups;
       try {
-        const data = await call('Search', { query: { query: keyword, source: item.id, mediaType: q('category').value } });
-        groups = data.groups || [];
+        const data = await call('Search', { query: { query: keyword, source: item.id, mediaType: category } });
+        if (!Array.isArray(data.groups) || !data.groups.length) throw new Error('Die Quelle hat keine gültige Suchantwort geliefert.');
+        groups = data.groups;
       } catch (error) {
         groups = [{ source: item.id, label: item.label, error: error.message }];
       }
@@ -253,7 +246,7 @@ export default function (view, params) {
   }
 
   async function openDetail(item, source) {
-    if (isCatalog(item.media_kind || q('category').value)) return openCatalogDetail(item, source);
+    if (isCatalog(item.media_kind)) return openCatalogDetail(item, source);
     const rawUrl = item.url || item.link || item.series_url;
     if (!rawUrl) return notice('Der Treffer enthält keine AniWorld-URL.', true);
     const generation = ++detailGeneration;
@@ -262,17 +255,16 @@ export default function (view, params) {
     setOptions(q('language'), [state.status.defaultLanguage || 'German Dub'], state.status.defaultLanguage);
     setOptions(q('provider'), [state.status.defaultProvider || 'VOE'], state.status.defaultProvider);
     try {
-      let type = item.media_type || q('category').value;
-      if (!item.media_type) {
-        const sourceObj = state.sources.find((s) => s.id === source);
-        if (sourceObj && Array.isArray(sourceObj.media_types) && sourceObj.media_types.length === 1 && sourceObj.media_types[0] === 'movie') {
-          type = 'movie';
-        }
-      }
+      const sourceObj = state.sources.find((s) => s.id === source);
+      const knownTypes = sourceObj && sourceObj.media_types || [];
+      // Group IDs are never request media types. Mixed sources are resolved by
+      // the existing detail/season plan, not by probing every search result.
+      const type = source === 'mangafire' ? 'manga' : ['movie', 'series', 'manga'].includes(item.media_type)
+        ? item.media_type : knownTypes.length === 1 ? knownTypes[0] : 'series';
       const payload = { title: item.title || item.name || 'Unbekannter Titel', seriesUrl: rawUrl, source, mediaType: type };
       const plan = await call('Requests/Plan', { method: 'POST', body: payload });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
-      state.detail = Object.assign(payload, { title: plan.title || payload.title, plan });
+      state.detail = Object.assign(payload, { mediaType: source === 'mangafire' ? 'manga' : plan.is_movie ? 'movie' : 'series', title: plan.title || payload.title, plan });
       q('detail-title').textContent = state.detail.title;
       q('description').textContent = plan.description || 'Keine Beschreibung verfügbar.';
       const advertisedProviderLanguages = plan.providers && typeof plan.providers === 'object'
@@ -336,7 +328,7 @@ export default function (view, params) {
     q('plan').replaceChildren(); dialogNotice(''); q('request').disabled = true; q('request').textContent = 'Anfragen';
     view.querySelector('.mf-options').hidden = true; q('catalog-options').hidden = false; q('format').replaceChildren(); q('catalog-target').textContent = '';
     try {
-      const detail = await call('Catalog/Details', { query: { source, id: item.id, mediaType: item.media_kind || q('category').value } });
+      const detail = await call('Catalog/Details', { query: { source, id: item.id, mediaType: item.media_kind } });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
       state.detail = Object.assign({}, detail, { backend: 'catalog' });
       q('detail-title').textContent = detail.title;

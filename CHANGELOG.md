@@ -1,5 +1,27 @@
 # Änderungen
 
+## 1.3.1
+
+- Genau zwei Suchbereiche nur im Jellyfin-Anfragensystem: **Serien & Filme** einschließlich Anime und Manga sowie **Bücher & Audio** für freigegebene E-Books, Hörbücher und Podcasts.
+- Die Quellenauswahl entfällt. Alle passenden, aktivierten und vom Administrator erlaubten Quellen werden automatisch berücksichtigt; die Quellenherkunft bleibt an den Karten erkennbar.
+- Suche und Empfehlungen fragen den Downloader ohne Kategorieparameter ab. Die Relevanzprüfung läuft ausschließlich im Connector. Fehlende Typmetadaten löschen keine Ergebnisse aus dem gemeinsamen Video-/Manga-Bereich; konkrete Typen bleiben bei Anfragen erhalten.
+- Ungültige Trefferlisten werden als Quellenfehler gemeldet und nicht als „Keine Treffer“ ausgegeben. Langsame/ausgefallene Quellen blockieren andere Ergebnisse nicht.
+- Manga-Anfragepläne bleiben beim Absenden Manga, statt fälschlich am Serienvergleich zu scheitern. Film-/Serientypen werden nach der Detailprüfung übernommen.
+- E-Book-, Hörbuch- und Podcast-Freigaben bleiben serverseitig unabhängig wirksam. Ohne Katalogfreigabe erscheint nur der erste Suchbereich.
+- Plugin-Webressourcen erhalten `Cache-Control: no-store`, um alte HTML-/JavaScript-Kombinationen nach Updates zu vermeiden.
+
+### Aktualisierung und Rückweg
+
+1. Vorhandene Plugin-/Downloader-Konfiguration und persistente Daten sichern; neue Übergaben bei Bedarf über den bestehenden Wartungsmodus anhalten.
+2. Zuerst **H0melab Downloader 2.1.1** bereitstellen. Dort werden Kategorieauswahl und Kategorie-/Relevanzfilter der eigenständigen Oberfläche zurückgenommen. Die benötigten API-Metadaten, Queue-Idempotenz und Katalogdateien bleiben erhalten.
+3. Danach **Connector 1.3.1** installieren und Jellyfin neu starten. Bereits geöffnete Jellyfin-Seiten neu laden.
+4. Startseite, „gravity falls“, eine Film- und eine Manga-Anfrage sowie erlaubte Buch-/Audioformate prüfen. Bei ausgeschalteter E-Book-Freigabe darf keine E-Book-Anfrage möglich sein.
+5. Keine neue Speichermigration: Anfrage-IDs, Status, konkrete Medientypen und Queue-Verknüpfungen bleiben unverändert.
+
+Bei einem Rückweg neue Übergaben anhalten und die vorherigen Programmstände mit der zugehörigen Sicherung verwenden. Bereits laufende oder abgeschlossene Downloads nicht erneut einreichen. Der funktionale Rückbau auf diesem Patch setzt keine Datenbank zurück.
+
+Veröffentlichung: Branch `models` und veröffentlichte GitHub-Release `v2.1.1` im Downloader; Branch `main` und Tag `v1.3.1` im Connector. Der Connector-Workflow erstellt die Release und das Repository-Manifest selbst. Bestehende Tags nicht verschieben.
+
 ## 1.3.0
 
 - Eigene Kategorien für Filme, Serien/Anime und Manga sowie optional E-Books, Hörbücher und Podcasts.

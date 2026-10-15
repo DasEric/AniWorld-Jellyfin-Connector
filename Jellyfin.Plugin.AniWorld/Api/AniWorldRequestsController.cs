@@ -96,7 +96,7 @@ public sealed class AniWorldRequestsController : ControllerBase
     }
 
     [HttpGet("Discover")]
-    public async Task<IActionResult> Discover(string mediaType = "series", string source = "all", CancellationToken cancellationToken = default)
+    public async Task<IActionResult> Discover(string mediaType = "video", string source = "all", CancellationToken cancellationToken = default)
     {
         var (userId, _) = CurrentUser();
         if (!Allow(userId, source == "all" ? "discover" : "discover-source", source == "all" ? 12 : 120))
@@ -106,7 +106,7 @@ public sealed class AniWorldRequestsController : ControllerBase
 
         try
         {
-            var category = MediaCategories.Normalize(mediaType);
+            var category = MediaCategories.NormalizeSearch(mediaType);
             if (category is null) return BadRequest(new { error = "Ungültige Kategorie." });
             var sections = await _application.DiscoverAsync(userId, category, source.Trim().ToLowerInvariant(), cancellationToken).ConfigureAwait(false);
             return Ok(new { sections });
@@ -150,7 +150,7 @@ public sealed class AniWorldRequestsController : ControllerBase
     public async Task<IActionResult> Search(
         [Required, MinLength(2), MaxLength(120)] string query,
         string source = "all",
-        string mediaType = "series",
+        string mediaType = "video",
         CancellationToken cancellationToken = default)
     {
         var (userId, _) = CurrentUser();
@@ -508,6 +508,7 @@ public sealed class AniWorldRequestsController : ControllerBase
     private IActionResult Embedded(string suffix, string contentType)
     {
         Response.Headers.XContentTypeOptions = "nosniff";
+        Response.Headers.CacheControl = "no-store";
         var resourceName = $"{typeof(Plugin).Namespace}.{suffix}";
         var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
         return stream is null ? NotFound() : File(stream, contentType);
