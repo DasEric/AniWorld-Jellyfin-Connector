@@ -9,10 +9,20 @@ export default function (view, params) {
   let mineRendered = false;
   let mineVisible = true;
   let visibilityListenerAttached = false;
-  let discoverTimer = null;
   let disposed = false;
   let searchGeneration = 0;
   let detailGeneration = 0;
+  let discoverGeneration = 0;
+  const isCatalog = (category) => ['ebook', 'audiobook', 'podcast'].includes(category);
+  const categoryLabel = (category) => ((state.status.categories || []).find((item) => item.id === category) || {}).label || category;
+  function availableSources() { return state.sources.filter((item) => (item.media_types || []).includes(q('category').value)); }
+  function populateSources() {
+    q('source').replaceChildren();
+    const all = document.createElement('option'); all.value = 'all'; all.textContent = 'Alle passenden Quellen'; q('source').appendChild(all);
+    availableSources().forEach((item) => {
+      const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; q('source').appendChild(option);
+    });
+  }
 
   function url(path, query) {
     let value = api.getUrl('AniWorldRequests/' + path);
@@ -71,41 +81,50 @@ export default function (view, params) {
       const data = await call('Sources');
       if (disposed || !view.isConnected) return;
       state.sources = Array.isArray(data.sources) ? data.sources : [];
-      state.sources.forEach((item) => {
-        const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; q('source').appendChild(option);
+      (state.status.categories || []).forEach((item) => {
+        const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; q('category').appendChild(option);
       });
-      await loadDiscover();
-      await detectAdmin();
+      if (Array.from(q('category').options).some((item) => item.value === 'series')) q('category').value = 'series';
+      populateSources();
+      updatePlaceholder();
+      await Promise.all([loadDiscover(), detectAdmin()]);
     } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); }
   }
-  async function loadDiscover(retry) {
+  async function loadDiscover() {
     if (disposed || !view.isConnected) return;
     const host = q('discover');
-    try {
-      const data = await call('Discover');
-      if (disposed || !view.isConnected) return;
-      const definitions = [['new', 'Neu'], ['popular', 'Beliebt'], ['movies', 'Filme']];
-      const total = definitions.reduce((count, row) => count + ((data.rows && data.rows[row[0]]) || []).length, 0);
-      if (!total && !retry) {
-        discoverTimer = setTimeout(() => { discoverTimer = null; loadDiscover(true); }, 2500);
-        return;
+    const generation = ++discoverGeneration;
+    const category = q('category').value;
+    const source = q('source').value;
+    const sources = availableSources().filter((item) => source === 'all' || item.id === source);
+    host.replaceChildren();
+    if (!sources.length) { host.innerHTML = '<div class="mf-empty">Keine freigegebene Quelle für diese Kategorie verfügbar.</div>'; return; }
+    const rows = new Map();
+    sources.forEach((item) => {
+      const section = document.createElement('section'); section.className = 'mf-discoverrow';
+      const heading = document.createElement('h3'); heading.className = 'mf-discoverhead'; heading.textContent = item.label;
+      const grid = document.createElement('div'); grid.className = 'mf-discovergrid'; grid.textContent = 'Laden…';
+      section.append(heading, grid); host.appendChild(section); rows.set(item.id, { section, grid });
+    });
+    let nextSource = 0;
+    const maximum = Math.max(1, Math.min(4, Number(state.status.maxSearchSources) || 4));
+    await Promise.all(Array.from({ length: Math.min(maximum, sources.length) }, async () => {
+      while (nextSource < sources.length && !disposed && generation === discoverGeneration) {
+        const item = sources[nextSource++];
+        let definition;
+        try {
+          const data = await call('Discover', { query: { mediaType: category, source: item.id } });
+          definition = (data.sections || []).find((section) => section.source === item.id) || { items: [] };
+        } catch (error) { definition = { items: [], error: error.message }; }
+        if (disposed || generation !== discoverGeneration || !view.isConnected) return;
+        const row = rows.get(item.id); row.grid.replaceChildren();
+        (definition.items || []).forEach((entry) => row.grid.appendChild(createMediaCard(entry, item.id, item.label)));
+        if (definition.error) { const error = document.createElement('div'); error.className = 'mf-notice mf-error'; error.textContent = definition.error; row.section.appendChild(error); }
+        if (!row.grid.children.length && !definition.error) row.section.remove();
       }
-      host.innerHTML = '';
-      definitions.forEach((definition) => {
-        const items = (data.rows && data.rows[definition[0]]) || [];
-        if (!items.length) return;
-        const section = document.createElement('section'); section.className = 'mf-discoverrow';
-        const heading = document.createElement('h3'); heading.className = 'mf-discoverhead'; heading.textContent = definition[1];
-        const grid = document.createElement('div'); grid.className = 'mf-discovergrid';
-        items.forEach((item) => grid.appendChild(createMediaCard(item, item.source, item.source_label)));
-        section.append(heading, grid); host.appendChild(section);
-      });
-      if (!host.children.length) host.innerHTML = '<div class="mf-empty">Zurzeit sind keine Empfehlungen verfügbar.</div>';
-    } catch (error) {
-      if (disposed || !view.isConnected) return;
-      host.innerHTML = '';
-      const box = document.createElement('div'); box.className = 'mf-notice mf-error'; box.textContent = 'Startansicht: ' + error.message; host.appendChild(box);
-    }
+    }));
+    if (!disposed && generation === discoverGeneration && view.isConnected && !host.children.length)
+      host.innerHTML = '<div class="mf-empty">Zurzeit sind keine Empfehlungen verfügbar.</div>';
   }
   async function detectAdmin() {
     if (disposed || !view.isConnected) return;
@@ -123,7 +142,11 @@ export default function (view, params) {
     q('results').hidden = !searching;
     if (!searching) q('results').innerHTML = '';
   }
-  q('query').addEventListener('input', () => { searchGeneration++; q('results').innerHTML = ''; syncSearchMode(); });
+  function updatePlaceholder() { q('query').placeholder = isCatalog(q('category').value) ? 'Titel oder Autor suchen' : 'Titel suchen, z. B. Gravity Falls'; }
+  function resetSearch() { searchGeneration++; closeDetail(); q('results').replaceChildren(); q('query').value = ''; syncSearchMode(); notice(''); loadDiscover(); }
+  q('category').addEventListener('change', () => { populateSources(); updatePlaceholder(); resetSearch(); });
+  q('source').addEventListener('change', resetSearch);
+  q('query').addEventListener('input', () => { searchGeneration++; closeDetail(); q('results').innerHTML = ''; syncSearchMode(); });
   q('search-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const generation = ++searchGeneration;
@@ -131,17 +154,20 @@ export default function (view, params) {
     const selectedSource = q('source').value;
     const maximum = Math.max(1, Math.min(32, Number(state.status.maxSearchSources) || 8));
     const sources = selectedSource === 'all'
-      ? state.sources.slice(0, maximum)
-      : state.sources.filter((item) => item.id === selectedSource);
+      ? availableSources()
+      : availableSources().filter((item) => item.id === selectedSource);
     syncSearchMode(); notice('');
     const host = q('results'); host.innerHTML = '';
     const pending = document.createElement('div'); pending.className = 'mf-empty'; pending.dataset.mfSearchPending = '1'; pending.textContent = 'Weitere Quellen werden durchsucht…'; host.appendChild(pending);
     if (!sources.length) { pending.remove(); notice('Keine freigegebene Quelle verfügbar.', true); return; }
     let resultCount = 0; let errorCount = 0;
-    await Promise.all(sources.map(async (item) => {
+    let nextSource = 0;
+    await Promise.all(Array.from({ length: Math.min(maximum, sources.length) }, async () => {
+      while (nextSource < sources.length && generation === searchGeneration && !disposed) {
+      const item = sources[nextSource++];
       let groups;
       try {
-        const data = await call('Search', { query: { query: keyword, source: item.id } });
+        const data = await call('Search', { query: { query: keyword, source: item.id, mediaType: q('category').value } });
         groups = data.groups || [];
       } catch (error) {
         groups = [{ source: item.id, label: item.label, error: error.message }];
@@ -149,6 +175,7 @@ export default function (view, params) {
       if (disposed || generation !== searchGeneration || !view.isConnected) return;
       const rendered = appendResults(host, groups, pending);
       resultCount += rendered.count; errorCount += rendered.errors;
+      }
     }));
     if (disposed || generation !== searchGeneration || !view.isConnected) return;
     pending.remove();
@@ -160,19 +187,27 @@ export default function (view, params) {
     groups.forEach((group) => {
       const results = group.data && Array.isArray(group.data.results) ? group.data.results : [];
       results.forEach((item) => {
-        host.insertBefore(createMediaCard(item, group.source, group.label), before); count++;
+        const card = createMediaCard(item, group.source, group.label);
+        card.dataset.relevance = String(Number(item.relevance) || 0);
+        card.dataset.sortTitle = item.title || item.name || '';
+        card.dataset.sortSource = group.source;
+        host.insertBefore(card, before); count++;
       });
       if (group.error) { errors++; const box = document.createElement('div'); box.className = 'mf-notice mf-error'; box.textContent = group.label + ': ' + group.error; host.insertBefore(box, before); }
     });
+    Array.from(host.querySelectorAll('.mf-card')).sort((a, b) => Number(b.dataset.relevance) - Number(a.dataset.relevance)
+      || a.dataset.sortTitle.localeCompare(b.dataset.sortTitle, 'de') || a.dataset.sortSource.localeCompare(b.dataset.sortSource))
+      .forEach((card) => host.insertBefore(card, before));
     return { count, errors };
   }
 
   function createMediaCard(item, sourceId, sourceLabel) {
     const card = document.createElement('article'); card.className = 'mf-card'; card.tabIndex = 0;
     const rawUrl = item.url || item.link || item.series_url;
-    if (item.poster_url) {
+    const poster = item.poster_url || item.cover_url;
+    if (poster) {
       const cover = document.createElement('img'); cover.className = 'mf-cover'; cover.loading = 'lazy'; cover.alt = '';
-      card.appendChild(cover); loadCover(cover, item.poster_url);
+      card.appendChild(cover); loadCover(cover, poster, item, sourceId);
     } else if (rawUrl) {
       const cover = document.createElement('img'); cover.className = 'mf-cover'; cover.loading = 'lazy'; cover.alt = '';
       card.appendChild(cover);
@@ -185,16 +220,19 @@ export default function (view, params) {
     }
     const body = document.createElement('div'); body.className = 'mf-cardbody';
     const title = document.createElement('div'); title.className = 'mf-cardtitle'; title.textContent = item.title || item.name || 'Unbekannter Titel';
-    const source = document.createElement('div'); source.className = 'mf-source'; source.textContent = (sourceLabel || sourceId || '') + (item.year ? ' · ' + item.year : '');
+    const source = document.createElement('div'); source.className = 'mf-source'; source.textContent = [sourceLabel || sourceId, item.author, item.year].filter(Boolean).join(' · ');
     body.append(title, source); card.appendChild(body);
     const open = () => openDetail(item, sourceId); card.addEventListener('click', open); card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
     return card;
   }
 
-  async function loadCover(image, posterUrl) {
+  async function loadCover(image, posterUrl, item, sourceId, retried) {
     let objectUrl = '';
     try {
-      const response = await api.fetch({ url: url('Image', { url: posterUrl }), type: 'GET' });
+      const catalog = item && isCatalog(item.media_kind);
+      const token = catalog ? new URL(posterUrl, window.location.origin).searchParams.get('token') : '';
+      const imageUrl = catalog ? url('Catalog/Cover', { token: token || '', source: sourceId, mediaType: item.media_kind }) : url('Image', { url: posterUrl });
+      const response = await api.fetch({ url: imageUrl, type: 'GET' });
       if (!response || typeof response.blob !== 'function') throw new Error('Ungültige Bildantwort');
       const blob = await response.blob();
       if (!blob.type.startsWith('image/')) throw new Error('Ungültiger Bildtyp');
@@ -204,19 +242,27 @@ export default function (view, params) {
       image.addEventListener('error', () => { URL.revokeObjectURL(objectUrl); image.remove(); }, { once: true });
     } catch (_) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (!retried && item && isCatalog(item.media_kind) && !disposed && image.isConnected) {
+        try {
+          const detail = await call('Catalog/Details', { query: { source: sourceId, id: item.id, mediaType: item.media_kind } });
+          if (detail.cover_url) return loadCover(image, detail.cover_url, item, sourceId, true);
+        } catch (_) { /* cover is optional */ }
+      }
       image.remove();
     }
   }
 
   async function openDetail(item, source) {
+    if (isCatalog(item.media_kind || q('category').value)) return openCatalogDetail(item, source);
     const rawUrl = item.url || item.link || item.series_url;
     if (!rawUrl) return notice('Der Treffer enthält keine AniWorld-URL.', true);
     const generation = ++detailGeneration;
+    q('catalog-options').hidden = true; view.querySelector('.mf-options').hidden = false;
     state.source = source; state.detail = null; q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">Bestand in Jellyfin wird geprüft…</div>'; dialogNotice(''); q('request').textContent = 'Anfragen'; q('request').disabled = true;
     setOptions(q('language'), [state.status.defaultLanguage || 'German Dub'], state.status.defaultLanguage);
     setOptions(q('provider'), [state.status.defaultProvider || 'VOE'], state.status.defaultProvider);
     try {
-      let type = item.media_type === 'movie' ? 'movie' : 'series';
+      let type = item.media_type || q('category').value;
       if (!item.media_type) {
         const sourceObj = state.sources.find((s) => s.id === source);
         if (sourceObj && Array.isArray(sourceObj.media_types) && sourceObj.media_types.length === 1 && sourceObj.media_types[0] === 'movie') {
@@ -264,6 +310,7 @@ export default function (view, params) {
   }
   function setOptions(select, values, preferred) { const clean = Array.from(new Set(values.filter(Boolean))); select.innerHTML = ''; clean.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = value; select.appendChild(option); }); if (clean.includes(preferred)) select.value = preferred; }
   q('request').addEventListener('click', async () => {
+    if (state.detail && state.detail.backend === 'catalog') return submitCatalog();
     if (!state.detail || !state.detail.plan || !state.detail.plan.missing_count || !q('language').value || !q('provider').value) {
       dialogNotice('Die Anfrage ist noch nicht vollständig vorbereitet. Bitte den Titel schließen und erneut öffnen.', true);
       return;
@@ -275,13 +322,48 @@ export default function (view, params) {
     q('request').disabled = true;
     try {
       // upscale entfernt
-      const payload = { planToken: detail.plan.plan_token || '', title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.plan.is_movie ? 'movie' : 'series', language: q('language').value, provider: q('provider').value };
+      const payload = { planToken: detail.plan.plan_token || '', title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.mediaType, language: q('language').value, provider: q('provider').value };
       const result = await call('Requests/Automatic', { method: 'POST', body: payload });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
       const message = result.status === 'queued' ? 'Nur die fehlenden Inhalte wurden direkt an AniWorld übergeben.' : 'Die Anfrage für die fehlenden Inhalte wurde an den Administrator gesendet.';
       closeDetail(); notice(message); switchTab('mine');
     } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) dialogNotice(error.message, true); } finally { if (!disposed && generation === detailGeneration && view.isConnected) { q('request').textContent = 'Anfragen'; q('request').disabled = !q('language').value || !q('provider').value; } }
   });
+  async function openCatalogDetail(item, source) {
+    const generation = ++detailGeneration;
+    state.detail = null;
+    q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || 'Laden…'; q('description').textContent = 'Katalogdetails werden geladen…';
+    q('plan').replaceChildren(); dialogNotice(''); q('request').disabled = true; q('request').textContent = 'Anfragen';
+    view.querySelector('.mf-options').hidden = true; q('catalog-options').hidden = false; q('format').replaceChildren(); q('catalog-target').textContent = '';
+    try {
+      const detail = await call('Catalog/Details', { query: { source, id: item.id, mediaType: item.media_kind || q('category').value } });
+      if (disposed || generation !== detailGeneration || !view.isConnected) return;
+      state.detail = Object.assign({}, detail, { backend: 'catalog' });
+      q('detail-title').textContent = detail.title;
+      q('description').textContent = [detail.author, detail.year, detail.language, detail.description].filter(Boolean).join(' · ');
+      (detail.assets || []).forEach((asset) => { const option = document.createElement('option'); option.value = asset.id; option.textContent = (asset.label || asset.extension.toUpperCase()) + (asset.downloaded ? ' – bereits heruntergeladen' : ''); q('format').appendChild(option); });
+      q('format').onchange = () => {
+        if (!state.detail || state.detail.backend !== 'catalog') return;
+        const asset = state.detail.assets.find((asset) => asset.id === q('format').value);
+        q('request').disabled = !asset || asset.downloaded;
+        q('catalog-target').textContent = asset ? (asset.downloaded ? 'Diese Datei ist bereits im Downloader vorhanden.' : asset.target_path || '') : 'Keine herunterladbare Datei verfügbar.';
+      };
+      q('format').onchange();
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) dialogNotice(error.message, true); }
+  }
+  async function submitCatalog() {
+    const detail = state.detail;
+    const generation = detailGeneration;
+    const asset = (detail.assets || []).find((asset) => asset.id === q('format').value);
+    if (!asset || asset.downloaded) return;
+    q('request').disabled = true; dialogNotice('Anfrage wird übermittelt…');
+    try {
+      const result = await call('Requests/Catalog', { method: 'POST', body: { source: detail.source, itemId: detail.id, assetId: asset.id, mediaType: detail.media_kind } });
+      if (disposed || generation !== detailGeneration || !view.isConnected) return;
+      closeDetail(); notice(result.status === 'completed' ? 'Die ausgewählte Datei ist bereits heruntergeladen.' : result.status === 'queued' ? 'Die ausgewählte Datei wurde an den Downloader übergeben.' : 'Die Anfrage wurde an den Administrator gesendet.'); switchTab('mine');
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) dialogNotice(error.message, true); }
+    finally { if (!disposed && generation === detailGeneration && view.isConnected) q('request').disabled = false; }
+  }
   function closeDetail() { detailGeneration++; state.detail = null; dialogNotice(''); q('overlay').style.display = 'none'; }
   q('close').addEventListener('click', closeDetail); q('cancel').addEventListener('click', closeDetail); q('overlay').addEventListener('click', (e) => { if (e.target === q('overlay')) closeDetail(); });
 
@@ -393,7 +475,7 @@ export default function (view, params) {
   }
   function updateRequestCard(card, item, admin, progress) {
     card.querySelector('[data-role="title"]').textContent = item.title;
-    card.querySelector('[data-role="meta"]').textContent = (admin ? item.username + ' · ' : '') + (item.selectionLabel || ((item.episodes || []).length + ' Episoden')) + ' · ' + item.language + ' · ' + new Date(item.createdUtc).toLocaleString();
+    card.querySelector('[data-role="meta"]').textContent = (admin ? item.username + ' · ' : '') + categoryLabel(item.mediaType) + ' · ' + (item.selectionLabel || ((item.episodes || []).length + ' Episoden')) + ' · ' + item.language + ' · ' + new Date(item.createdUtc).toLocaleString();
     const pill = card.querySelector('[data-role="pill"]'); pill.className = 'mf-pill ' + item.status; pill.textContent = progressLabel(progress) || statusLabel(item.status);
     const progressBox = card.querySelector('[data-role="progress"]'); progressBox.hidden = !progress;
     if (progress) {
@@ -434,9 +516,8 @@ export default function (view, params) {
     mineVisible = false;
     stopMinePolling();
     setVisibilityListener(false);
-    if (discoverTimer) clearTimeout(discoverTimer);
-    discoverTimer = null;
     searchGeneration++;
     detailGeneration++;
+    discoverGeneration++;
   };
 }

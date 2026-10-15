@@ -5,6 +5,10 @@ namespace Jellyfin.Plugin.AniWorld.Models;
 /// <summary>Payload, mit dem ein Jellyfin-Benutzer Inhalte anfordert.</summary>
 public sealed class CreateMediaRequest
 {
+    public string Backend { get; set; } = "video";
+    public string CatalogItemId { get; set; } = string.Empty;
+    public string CatalogAssetId { get; set; } = string.Empty;
+    public string Format { get; set; } = string.Empty;
     [Required]
     [MaxLength(300)]
     public string Title { get; set; } = string.Empty;
@@ -75,4 +79,20 @@ public sealed class UpdateApiKeyRequest
     [Required]
     [MaxLength(512)]
     public string ApiKey { get; set; } = string.Empty;
+}
+
+/// <summary>A catalog selection contains identifiers, never a client-selected download URL.</summary>
+public sealed class CatalogMediaRequest
+{
+    [Required, MaxLength(80)]
+    public string Source { get; set; } = string.Empty;
+
+    [Required, MaxLength(2048)]
+    public string ItemId { get; set; } = string.Empty;
+
+    [Required, MaxLength(2048)]
+    public string AssetId { get; set; } = string.Empty;
+
+    [Required, MaxLength(20)]
+    public string MediaType { get; set; } = string.Empty;
 }

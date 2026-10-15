@@ -1,12 +1,12 @@
 {
   "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "name": "AniWorld Requests",
-  "description": "AniWorld-Suche und Download-Anfragen für alle Jellyfin-Benutzer.",
-  "overview": "Erlaubt Jellyfin-Benutzern, Inhalte auf AniWorld und weiteren Quellen zu suchen und Download-Anfragen zu stellen.",
+  "description": "Medienanfragen mit Kategorien für H0melab Downloader.",
+  "overview": "Filme, Serien und Manga sowie optional E-Books, Hörbücher und Podcasts über die aktivierten Quellen suchen und anfragen.",
   "owner": "Eric",
   "category": "General",
-  "version": "1.2.1.0",
+  "version": "1.3.0.0",
   "targetAbi": "12.0.0.0",
   "framework": "net10.0",
-  "changelog": "Startet nach vollständigen Downloads sichtbare Jellyfin-Scanaufgaben für die physischen Film- oder Serienbibliotheksordner. Fehlgeschlagene Scans bleiben zur Wiederholung vorgemerkt."
+  "changelog": "Kategorien und relevante quellenübergreifende Suche, vollständige Startseiten-Quellenzuordnung sowie getrennt freischaltbare E-Book-, Hörbuch- und Podcast-Anfragen für H0melab Downloader 2.1. Katalogdateien verwenden eigene Formatauswahl, Queue-Übergabe und Abschlusszustände."
 }

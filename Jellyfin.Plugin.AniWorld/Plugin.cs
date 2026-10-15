@@ -54,7 +54,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public override string Name => PluginDisplayName;
 
-    public override string Description => "AniWorld-Suche und Download-Anfragen für alle Jellyfin-Benutzer.";
+    public override string Description => "Medienanfragen mit Kategorien für H0melab Downloader.";
 
     public override Guid Id => Guid.Parse(PluginGuid);
 

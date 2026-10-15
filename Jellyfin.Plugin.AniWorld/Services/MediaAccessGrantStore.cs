@@ -23,6 +23,15 @@ public sealed class MediaAccessGrantStore
     public void GrantUrl(string userId, string source, string url)
         => GrantUrls(userId, source, [url]);
 
+    public void GrantCatalogItem(string userId, string source, string id)
+        => GrantUrl(userId, source, CatalogKey(source, id));
+
+    public bool IsCatalogItemGranted(string userId, string source, string id)
+        => IsGranted(userId, CatalogKey(source, id), out var granted) && string.Equals(source, granted, StringComparison.Ordinal);
+
+    private static string CatalogKey(string source, string id)
+        => "https://catalog.invalid/" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source + "\n" + id)));
+
     public bool IsGranted(string userId, string url, out string source)
     {
         source = string.Empty;
@@ -159,7 +168,11 @@ public sealed class MediaAccessGrantStore
             return false;
         }
 
-        var builder = new UriBuilder(uri) { Fragment = string.Empty };
+        // MegaKino multiplexes episodes on one page. This fragment is a real
+        // downloader selector, unlike ordinary navigation anchors.
+        var selector = uri.Fragment.StartsWith("#mkep=", StringComparison.Ordinal);
+        if (selector && !System.Text.RegularExpressions.Regex.IsMatch(uri.Fragment, "^#mkep=[1-9][0-9]{0,5}$")) return false;
+        var builder = new UriBuilder(uri) { Fragment = selector ? uri.Fragment[1..] : string.Empty };
         normalized = builder.Uri.AbsoluteUri;
         return true;
     }

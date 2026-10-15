@@ -4,7 +4,6 @@ using System.Net.Mime;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Jellyfin.Plugin.AniWorld.Models;
 using Jellyfin.Plugin.AniWorld.Services;
 using MediaBrowser.Common.Api;
@@ -69,6 +68,7 @@ public sealed class AniWorldRequestsController : ControllerBase
             defaultLanguage = config?.DefaultLanguage ?? "German Dub",
             defaultProvider = config?.DefaultProvider ?? "VOE",
             maxSearchSources = Math.Clamp(config?.MaxSearchSources ?? 8, 1, MaxKnownSources),
+            categories = MediaCategories.Available(config ?? new Configuration.PluginConfiguration()),
         });
     }
 
@@ -96,102 +96,20 @@ public sealed class AniWorldRequestsController : ControllerBase
     }
 
     [HttpGet("Discover")]
-    public async Task<IActionResult> Discover(CancellationToken cancellationToken)
+    public async Task<IActionResult> Discover(string mediaType = "series", string source = "all", CancellationToken cancellationToken = default)
     {
         var (userId, _) = CurrentUser();
-        if (!Allow(userId, "discover", 12))
+        if (!Allow(userId, source == "all" ? "discover" : "discover-source", source == "all" ? 12 : 120))
         {
             return RateLimitExceeded();
         }
 
         try
         {
-            var allowedSourcesList = await _application.GetAllowedSourcesAsync(
-                userId,
-                cancellationToken,
-                applyRateLimit: false).ConfigureAwait(false);
-            var allowed = allowedSourcesList.ToDictionary(source => source.Id, source => source.Label, StringComparer.OrdinalIgnoreCase);
-
-            var tasks = new List<Task<(string category, JsonElement data)>>();
-
-            void AddTask(string category, Func<CancellationToken, Task<JsonElement>> func)
-            {
-                tasks.Add(func(cancellationToken).ContinueWith(t => 
-                {
-                    return t.IsFaulted || t.IsCanceled ? (category, default(JsonElement)) : (category, t.Result);
-                }, cancellationToken));
-            }
-
-            if (allowed.ContainsKey("aniworld"))
-            {
-                AddTask("new", _aniWorld.GetNewAnimesAsync);
-                AddTask("popular", _aniWorld.GetPopularAnimesAsync);
-            }
-            
-            if (allowed.ContainsKey("sto"))
-            {
-                AddTask("new", _aniWorld.GetNewSeriesAsync);
-                AddTask("popular", _aniWorld.GetPopularSeriesAsync);
-            }
-
-            if (allowed.ContainsKey("burningseries"))
-            {
-                AddTask("new", _aniWorld.GetBurningSeriesAsync);
-            }
-
-            if (allowed.ContainsKey("htv"))
-            {
-                AddTask("popular", _aniWorld.GetHtvTrendingAsync);
-            }
-
-            if (allowed.ContainsKey("megakino"))
-            {
-                AddTask("movies", _aniWorld.GetPopularMoviesAsync);
-            }
-
-            if (allowed.ContainsKey("filmpalast"))
-            {
-                AddTask("movies", _aniWorld.GetFilmpalastMoviesAsync);
-            }
-
-            if (allowed.ContainsKey("kinox"))
-            {
-                AddTask("movies", _aniWorld.GetKinoxMoviesAsync);
-            }
-
-            if (allowed.ContainsKey("cineby"))
-            {
-                AddTask("movies", _aniWorld.GetCinebyMoviesAsync);
-            }
-
-            var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-
-            var newItems = new List<DiscoverItem>();
-            var popularItems = new List<DiscoverItem>();
-            var movieItems = new List<DiscoverItem>();
-
-            foreach (var (category, data) in results)
-            {
-                if (data.ValueKind == JsonValueKind.Undefined) continue;
-                var rowItems = ReadDiscoverRow(data, "items", allowed);
-                if (category == "new") newItems.AddRange(rowItems);
-                else if (category == "popular") popularItems.AddRange(rowItems);
-                else if (category == "movies") movieItems.AddRange(rowItems);
-            }
-
-            var rows = new Dictionary<string, IReadOnlyList<DiscoverItem>>(StringComparer.Ordinal)
-            {
-                ["new"] = newItems.Take(36).ToList(),
-                ["popular"] = popularItems.Take(36).ToList(),
-                ["movies"] = movieItems.Take(36).ToList(),
-            };
-
-            foreach (var item in rows.Values.SelectMany(items => items))
-            {
-                _grants.GrantUrl(userId, item.Source, item.Url);
-            }
-
-            return Ok(new { rows });
+            var category = MediaCategories.Normalize(mediaType);
+            if (category is null) return BadRequest(new { error = "Ungültige Kategorie." });
+            var sections = await _application.DiscoverAsync(userId, category, source.Trim().ToLowerInvariant(), cancellationToken).ConfigureAwait(false);
+            return Ok(new { sections });
         }
         catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException)
         {
@@ -232,6 +150,7 @@ public sealed class AniWorldRequestsController : ControllerBase
     public async Task<IActionResult> Search(
         [Required, MinLength(2), MaxLength(120)] string query,
         string source = "all",
+        string mediaType = "series",
         CancellationToken cancellationToken = default)
     {
         var (userId, _) = CurrentUser();
@@ -241,7 +160,7 @@ public sealed class AniWorldRequestsController : ControllerBase
                 userId,
                 query,
                 source,
-                mediaType: null,
+                mediaType: mediaType,
                 issueSelectionTokens: false,
                 cancellationToken).ConfigureAwait(false);
             return Ok(new { groups = response.Groups });
@@ -267,6 +186,38 @@ public sealed class AniWorldRequestsController : ControllerBase
     [HttpGet("Providers")]
     public Task<IActionResult> GetProviders([Required] string url, CancellationToken cancellationToken)
         => ProxyGranted(url, token => _aniWorld.GetProvidersAsync(url, token), cancellationToken);
+
+    [HttpGet("Catalog/Details")]
+    public async Task<IActionResult> CatalogDetails([Required, MaxLength(80)] string source, [Required, MaxLength(2048)] string id, [Required] string mediaType, CancellationToken cancellationToken)
+    {
+        var (userId, _) = CurrentUser();
+        if (!Allow(userId, "catalog", 120)) return RateLimitExceeded();
+        try { return Ok(await _application.GetCatalogDetailAsync(userId, source, id, mediaType, cancellationToken).ConfigureAwait(false)); }
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
+    }
+
+    [HttpGet("Catalog/Cover")]
+    public async Task<IActionResult> CatalogCover([Required] string source, [Required] string mediaType, [Required, MaxLength(4096)] string token, CancellationToken cancellationToken)
+    {
+        var (userId, _) = CurrentUser();
+        if (!Allow(userId, "image", 240)) return RateLimitExceeded();
+        try
+        {
+            var image = await _application.GetCatalogCoverAsync(userId, source, mediaType, token, cancellationToken).ConfigureAwait(false);
+            Response.Headers.CacheControl = "private, max-age=1800";
+            return File(image.Data, image.MediaType);
+        }
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
+    }
+
+    [HttpPost("Requests/Catalog")]
+    [Consumes(MediaTypeNames.Application.Json)]
+    public async Task<IActionResult> CreateCatalogRequest([FromBody] CatalogMediaRequest request, CancellationToken cancellationToken)
+    {
+        var (userId, username) = CurrentUser();
+        try { return MapSubmitResult(await _application.SubmitCatalogAsync(userId, username, request, cancellationToken).ConfigureAwait(false), request.MediaType); }
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
+    }
 
     [HttpPost("Requests/Plan")]
     [Consumes(MediaTypeNames.Application.Json)]
@@ -411,8 +362,10 @@ public sealed class AniWorldRequestsController : ControllerBase
         }
 
         var (_, admin) = CurrentUser();
-        var result = await _application.ApproveAsync(id, admin, cancellationToken).ConfigureAwait(false);
-        if (result.Status is RequestStatuses.Queued or RequestStatuses.Available)
+        MediaRequest result;
+        try { result = await _application.ApproveAsync(id, admin, cancellationToken).ConfigureAwait(false); }
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
+        if (result.Status is RequestStatuses.Queued or RequestStatuses.Available or RequestStatuses.Completed)
         {
             return Ok(result);
         }
@@ -539,13 +492,16 @@ public sealed class AniWorldRequestsController : ControllerBase
 
         try
         {
+            var sources = await _application.GetAllowedSourcesAsync(userId, cancellationToken, applyRateLimit: false).ConfigureAwait(false);
+            if (!sources.Any(item => item.Id == source && item.Backend == "video"))
+                return BadRequest(new { error = "Diese Quelle ist deaktiviert oder verwendet den Katalogzugang." });
             var response = await action(cancellationToken).ConfigureAwait(false);
             _grants.GrantFromJson(userId, source, response);
             return Ok(response);
         }
-        catch (AniWorldException exception)
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException)
         {
-            return AniWorldError(exception);
+            return ApplicationError(exception);
         }
     }
 
@@ -651,114 +607,6 @@ public sealed class AniWorldRequestsController : ControllerBase
     }
 
     /// <summary>
-    /// Liest Discover-Einträge aus AniWorld-Endpunkten.
-    /// AniWorld liefert entweder ein Array direkt oder { items: [...] }.
-    /// </summary>
-    private static IReadOnlyList<DiscoverItem> ReadDiscoverRow(
-        JsonElement response,
-        string itemsKey,
-        IReadOnlyDictionary<string, string> allowedSources)
-    {
-        const int maxItemsPerRow = 18;
-        var output = new List<DiscoverItem>();
-
-        JsonElement items;
-        if (response.ValueKind == JsonValueKind.Array)
-        {
-            items = response;
-        }
-        else if (response.ValueKind == JsonValueKind.Object)
-        {
-            if (response.TryGetProperty(itemsKey, out var wrapped) && wrapped.ValueKind == JsonValueKind.Array)
-                items = wrapped;
-            else if (response.TryGetProperty("results", out wrapped) && wrapped.ValueKind == JsonValueKind.Array)
-                items = wrapped;
-            else if (response.TryGetProperty("data", out wrapped) && wrapped.ValueKind == JsonValueKind.Array)
-                items = wrapped;
-            else
-                return output;
-        }
-        else
-        {
-            return output;
-        }
-
-        foreach (var item in items.EnumerateArray())
-        {
-            if (item.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            var source = ReadJsonString(item, "source", 80);
-            var title = ReadJsonString(item, "title", 300);
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                title = ReadJsonString(item, "name", 300);
-            }
-
-            var rawUrl = ReadJsonString(item, "url", 2048);
-            if (string.IsNullOrWhiteSpace(rawUrl))
-            {
-                rawUrl = ReadJsonString(item, "link", 2048);
-            }
-
-            if (string.IsNullOrWhiteSpace(source))
-            {
-                source = allowedSources.Keys.FirstOrDefault() ?? "aniworld";
-            }
-
-            if (!allowedSources.TryGetValue(source, out var sourceLabel))
-            {
-                sourceLabel = source;
-            }
-
-            if (string.IsNullOrWhiteSpace(title) || !MediaAccessGrantStore.TryNormalizeUrl(rawUrl, out var normalizedUrl))
-            {
-                continue;
-            }
-
-            var posterUrl = ReadJsonString(item, "poster_url", 4096);
-            if (!TryReadAniWorldImageUrl(posterUrl, out _))
-            {
-                posterUrl = string.Empty;
-            }
-
-            var mediaType = ReadJsonString(item, "media_type", 20);
-            output.Add(new DiscoverItem(
-                SafeIdentity(title),
-                normalizedUrl,
-                source,
-                sourceLabel,
-                mediaType == "movies" ? "movie" : "series",
-                posterUrl,
-                ReadJsonString(item, "year", 16)));
-            if (output.Count >= maxItemsPerRow)
-            {
-                break;
-            }
-        }
-
-        return output;
-    }
-
-    private static string ReadJsonString(JsonElement item, string name, int maximum)
-    {
-        if (!item.TryGetProperty(name, out var value))
-        {
-            return string.Empty;
-        }
-
-        var text = value.ValueKind switch
-        {
-            JsonValueKind.String => value.GetString() ?? string.Empty,
-            JsonValueKind.Number => value.GetRawText(),
-            _ => string.Empty,
-        };
-        return text.Length <= maximum && !text.Any(char.IsControl) ? text.Trim() : string.Empty;
-    }
-
-    /// <summary>
     /// Liest und validiert eine AniWorld-Bild-Proxy-URL.
     /// AniWorld nutzt /api/proxy-image?url=... statt /api/img?url=...
     /// </summary>
@@ -848,7 +696,8 @@ public sealed class AniWorldRequestsController : ControllerBase
             }),
             SubmitDisposition.AlreadyAvailable => Conflict(new
             {
-                error = string.Equals(mediaType, "movie", StringComparison.OrdinalIgnoreCase)
+                error = MediaCategories.IsCatalog(mediaType) ? "Die ausgewählte Datei wurde bereits heruntergeladen."
+                    : string.Equals(mediaType, "movie", StringComparison.OrdinalIgnoreCase)
                     ? "Der Film ist bereits vollständig vorhanden."
                     : "Alle verfügbaren Staffeln und Episoden sind bereits vorhanden.",
                 alreadyAvailable = true,
@@ -865,12 +714,4 @@ public sealed class AniWorldRequestsController : ControllerBase
     internal static int? ReadExpectedEpisodeCount(JsonElement season)
         => AniWorldRequestApplicationService.ReadExpectedEpisodeCount(season);
 
-    private sealed record DiscoverItem(
-        [property: JsonPropertyName("title")] string Title,
-        [property: JsonPropertyName("url")] string Url,
-        [property: JsonPropertyName("source")] string Source,
-        [property: JsonPropertyName("source_label")] string SourceLabel,
-        [property: JsonPropertyName("media_type")] string MediaType,
-        [property: JsonPropertyName("poster_url")] string PosterUrl,
-        [property: JsonPropertyName("year")] string Year);
 }

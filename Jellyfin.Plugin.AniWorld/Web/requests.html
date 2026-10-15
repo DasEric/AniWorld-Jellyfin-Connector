@@ -5,7 +5,7 @@
     .mf-title{margin:0;font-size:1.65rem}.mf-muted{opacity:.68}.mf-status{padding:.35rem .65rem;border-radius:999px;background:rgba(0,164,220,.16);font-size:.85rem}
     .mf-tabs{display:flex;gap:.45rem;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,.12);margin-bottom:1rem;padding-bottom:.65rem}
     .mf-tab{border:0;border-radius:.4rem;padding:.65rem .9rem;background:rgba(255,255,255,.08);color:inherit;cursor:pointer}.mf-tab.active{background:#00a4dc;color:#fff}
-    .mf-panel{display:none}.mf-panel.active{display:block}.mf-searchbar{display:grid;grid-template-columns:minmax(12rem,1fr) minmax(10rem,.35fr) auto;gap:.65rem;align-items:end}
+    .mf-panel{display:none}.mf-panel.active{display:block}.mf-searchbar{display:grid;grid-template-columns:minmax(9rem,.4fr) minmax(12rem,1fr) minmax(10rem,.4fr) auto;gap:.65rem;align-items:end}
     .mf-field label{display:block;font-size:.85rem;margin:0 0 .3rem;opacity:.75}.mf-input,.mf-select{width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,.2);border-radius:.4rem;background:rgba(0,0,0,.22);color:inherit;padding:.72rem}
     .mf-btn{border:0;border-radius:.4rem;padding:.72rem 1rem;background:#00a4dc;color:#fff;cursor:pointer;font-weight:600}.mf-btn.secondary{background:rgba(255,255,255,.11);color:inherit}.mf-btn.danger{background:#9f2d38}.mf-btn:disabled{opacity:.5;cursor:default}
     .mf-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:.8rem;margin-top:1rem}.mf-card{border:1px solid rgba(255,255,255,.12);border-radius:.55rem;background:rgba(255,255,255,.055);overflow:hidden;cursor:pointer;min-height:115px;display:flex;flex-direction:column}.mf-card:hover{border-color:#00a4dc;transform:translateY(-1px)}
@@ -22,7 +22,7 @@
     @media(max-width:650px){.mf-searchbar{grid-template-columns:1fr}.mf-options{grid-template-columns:1fr}.mf-app{padding:.75rem}.mf-results{grid-template-columns:repeat(2,minmax(0,1fr))}}
   </style>
   <div data-role="content"><div class="content-primary mf-app">
-    <div class="mf-head"><div><h2 class="mf-title">AniWorld Anfragen</h2><div class="mf-muted">Filme und Serien suchen und für Jellyfin anfragen</div></div><span class="mf-status" data-mf="mode">Laden…</span></div>
+    <div class="mf-head"><div><h2 class="mf-title">Medienanfragen</h2><div class="mf-muted">Medien über deinen H0melab Downloader suchen und anfragen</div></div><span class="mf-status" data-mf="mode">Laden…</span></div>
     <div data-mf="notice"></div>
     <nav class="mf-tabs">
       <button class="mf-tab active" data-tab="search" type="button">Suche</button>
@@ -31,11 +31,12 @@
     </nav>
     <section class="mf-panel active" data-panel="search">
       <form class="mf-searchbar" data-mf="search-form">
-        <div class="mf-field"><label>Film oder Serie</label><input class="mf-input" data-mf="query" minlength="2" maxlength="120" required placeholder="z. B. Dune oder Breaking Bad"></div>
+        <div class="mf-field"><label for="mf-category">Kategorie</label><select id="mf-category" class="mf-select" data-mf="category"></select></div>
+        <div class="mf-field"><label for="mf-query">Suchbegriff</label><input id="mf-query" class="mf-input" data-mf="query" minlength="2" maxlength="120" required placeholder="Titel suchen"></div>
         <div class="mf-field"><label>Quelle</label><select class="mf-select" data-mf="source"><option value="all">Alle Quellen</option></select></div>
         <button class="mf-btn" type="submit">Suchen</button>
       </form>
-      <div class="mf-discover" data-mf="discover"><div class="mf-empty">Filme und Serien werden geladen…</div></div>
+      <div class="mf-discover" data-mf="discover"><div class="mf-empty">Verfügbare Quellen werden geladen…</div></div>
       <div class="mf-results" data-mf="results" hidden></div>
     </section>
     <section class="mf-panel" data-panel="mine"><div class="mf-actions"><button class="mf-btn secondary" data-mf="refresh-mine" type="button">Aktualisieren</button></div><div class="mf-list" data-mf="mine"></div></section>
@@ -51,6 +52,7 @@
             <div class="mf-field"><label>Sprache</label><select class="mf-select" data-mf="language"></select></div>
             <div class="mf-field"><label>Provider/Hoster</label><select class="mf-select" data-mf="provider"></select></div>
           </div>
+          <div class="mf-field" data-mf="catalog-options" hidden><label for="mf-format">Datei / Format</label><select id="mf-format" class="mf-select" data-mf="format"></select><div class="mf-meta" data-mf="catalog-target"></div></div>
           <div data-mf="dialog-notice" aria-live="polite"></div>
           <div class="mf-dialogactions"><button class="mf-btn secondary" data-mf="cancel" type="button">Abbrechen</button><button class="mf-btn" data-mf="request" type="button">Anfragen</button></div>
         </div>

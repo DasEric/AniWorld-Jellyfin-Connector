@@ -22,6 +22,15 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets whether requests are queued without admin approval.</summary>
     public bool AutoApproveRequests { get; set; }
 
+    /// <summary>Gets or sets whether Jellyfin users may search and request eBooks.</summary>
+    public bool AllowEbookRequests { get; set; }
+
+    /// <summary>Gets or sets whether Jellyfin users may search and request audio books.</summary>
+    public bool AllowAudiobookRequests { get; set; }
+
+    /// <summary>Gets or sets whether Jellyfin users may search and request podcasts.</summary>
+    public bool AllowPodcastRequests { get; set; }
+
     /// <summary>Gets or sets whether the sidebar entry is injected for every user.</summary>
     public bool EnableAllUsers { get; set; } = true;
 

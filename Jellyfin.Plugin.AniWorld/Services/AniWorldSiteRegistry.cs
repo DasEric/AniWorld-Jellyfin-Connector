@@ -16,17 +16,17 @@ public static class AniWorldSiteRegistry
     /// </summary>
     public static readonly IReadOnlyList<AniWorldSiteInfo> KnownSites =
     [
-        new("aniworld",       "AniWorld",       ["series"]),
-        new("sto",            "Serienstream",   ["series"]),
-        new("kinox",          "Kinox",          ["movie", "series"]),
-        new("burningseries",  "BurningSeries",  ["series"]),
-        new("megakino",       "MegaKino",       ["movie", "series"]),
-        new("cineby",         "Cineby",         ["movie", "series"]),
-        new("filmpalast",     "FilmPalast",     ["movie"]),
-        new("filmo",          "Filmo",          ["movie"]),
-        new("moflix",         "Moflix",         ["movie", "series"]),
-        new("mangafire",      "MangaFire",      ["series"]),
-        new("htv",            "HanimeTV",       ["series"]),
+        new("aniworld",       "AniWorld",       ["movie", "series"], BrowsePaths: ["api/new-animes", "api/popular-animes"]),
+        new("sto",            "Serienstream",   ["series"], BrowsePaths: ["api/new-series", "api/popular-series"]),
+        new("kinox",          "Kinox",          ["movie", "series"], BrowsePaths: ["api/kinox-movies"]),
+        new("burningseries",  "BurningSeries",  ["series"], BrowsePaths: ["api/burningseries-series"]),
+        new("megakino",       "MegaKino",       ["movie", "series"], BrowsePaths: ["api/popular-movies"]),
+        new("cineby",         "Cineby",         ["movie", "series"], BrowsePaths: ["api/cineby-movies"]),
+        new("filmpalast",     "FilmPalast",     ["movie"], BrowsePaths: ["api/filmpalast-movies"]),
+        new("filmo",          "Filmo",          ["movie"], BrowsePaths: ["api/filmo-movies"]),
+        new("moflix",         "Moflix",         ["movie", "series"], BrowsePaths: ["api/moflix-movies"]),
+        new("mangafire",      "MangaFire",      ["manga"], BrowsePaths: ["api/mangafire-trending"]),
+        new("htv",            "HanimeTV",       ["series"], BrowsePaths: ["api/htv-trending"]),
     ];
 
     /// <summary>
@@ -84,4 +84,6 @@ public static class AniWorldSiteRegistry
 public sealed record AniWorldSiteInfo(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("label")] string Label,
-    [property: JsonPropertyName("media_types")] IReadOnlyList<string> MediaTypes);
+    [property: JsonPropertyName("media_types")] IReadOnlyList<string> MediaTypes,
+    [property: JsonPropertyName("backend")] string Backend = "video",
+    [property: JsonPropertyName("browse_paths")] IReadOnlyList<string>? BrowsePaths = null);

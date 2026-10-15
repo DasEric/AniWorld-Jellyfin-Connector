@@ -27,6 +27,21 @@ public sealed class MediaRequest
     [JsonPropertyName("mediaType")]
     public string MediaType { get; set; } = "series";
 
+    [JsonPropertyName("backend")]
+    public string Backend { get; set; } = "video";
+
+    [JsonPropertyName("catalogItemId")]
+    public string CatalogItemId { get; set; } = string.Empty;
+
+    [JsonPropertyName("catalogAssetId")]
+    public string CatalogAssetId { get; set; } = string.Empty;
+
+    [JsonPropertyName("format")]
+    public string Format { get; set; } = string.Empty;
+
+    [JsonPropertyName("submissionKey")]
+    public string SubmissionKey { get; set; } = string.Empty;
+
     [JsonPropertyName("selectionLabel")]
     public string SelectionLabel { get; set; } = string.Empty;
 

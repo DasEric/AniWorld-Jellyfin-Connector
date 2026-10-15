@@ -56,8 +56,10 @@ public sealed class RequestStore
             var episodesJson = JsonSerializer.Serialize(request.Episodes);
             var duplicate = _document.Requests.LastOrDefault(item =>
                 item.UserId == userId
-                && item.SeriesUrl == request.SeriesUrl
-                && item.EpisodesJson == episodesJson
+                && item.Backend == request.Backend
+                && (request.Backend == "catalog"
+                    ? item.Source == request.Source && item.CatalogItemId == request.CatalogItemId && item.CatalogAssetId == request.CatalogAssetId
+                    : item.SeriesUrl == request.SeriesUrl && item.EpisodesJson == episodesJson)
                 && IsOpen(item));
             if (duplicate is not null)
             {
@@ -85,6 +87,11 @@ public sealed class RequestStore
                 SeriesUrl = request.SeriesUrl,
                 Source = request.Source,
                 MediaType = request.MediaType,
+                Backend = request.Backend,
+                CatalogItemId = request.CatalogItemId,
+                CatalogAssetId = request.CatalogAssetId,
+                Format = request.Format,
+                SubmissionKey = Guid.NewGuid().ToString("N"),
                 SelectionLabel = request.SelectionLabel,
                 EpisodesJson = episodesJson,
                 Language = request.Language,
@@ -188,7 +195,7 @@ public sealed class RequestStore
             }
 
             var document = CloneDocument();
-            foreach (var item in document.Requests.Where(item => item.Status == RequestStatuses.Completed
+            foreach (var item in document.Requests.Where(item => item.Status == RequestStatuses.Completed && (item.MediaType is "movie" or "series")
                          && item.LibraryScanTriggeredUtc.HasValue))
             {
                 item.LibraryScanPending = true;
@@ -230,6 +237,8 @@ public sealed class RequestStore
 
             var document = CloneDocument();
             var item = document.Requests.First(candidate => candidate.Id == id);
+            if (item.Status == RequestStatuses.Failed && item.AniWorldQueueId.HasValue)
+                item.SubmissionKey = Guid.NewGuid().ToString("N");
             item.Status = RequestStatuses.Processing;
             item.Error = null;
             await SaveLockedAsync(document, cancellationToken).ConfigureAwait(false);
@@ -258,6 +267,9 @@ public sealed class RequestStore
 
     public Task MarkAvailableAsync(long id, string decidedBy, CancellationToken cancellationToken)
         => UpdateDecisionAsync(id, RequestStatuses.Available, decidedBy, null, null, cancellationToken);
+
+    public Task MarkCatalogCompletedAsync(long id, string decidedBy, CancellationToken cancellationToken)
+        => UpdateDecisionAsync(id, RequestStatuses.Completed, decidedBy, null, null, cancellationToken);
 
     public async Task<bool> TryUpdateProcessingPlanAsync(
         long id,
@@ -413,7 +425,7 @@ public sealed class RequestStore
                 item.Error = error;
                 if (status == RequestStatuses.Completed)
                 {
-                    item.LibraryScanPending = true;
+                    item.LibraryScanPending = item.MediaType is "movie" or "series";
                 }
 
                 changed = true;
@@ -515,6 +527,12 @@ public sealed class RequestStore
             var loaded = JsonSerializer.Deserialize<StoreDocument>(File.ReadAllText(_path), _jsonOptions)
                 ?? new StoreDocument();
             loaded.Requests ??= [];
+            foreach (var item in loaded.Requests)
+            {
+                if (string.IsNullOrEmpty(item.SubmissionKey)) item.SubmissionKey = Guid.NewGuid().ToString("N");
+                if (item.Source == "mangafire") item.MediaType = "manga";
+                if (item.MediaType is not ("movie" or "series")) item.LibraryScanPending = false;
+            }
             foreach (var interrupted in loaded.Requests.Where(item => item.Status == RequestStatuses.Processing))
             {
                 interrupted.Status = RequestStatuses.Failed;
@@ -620,6 +638,7 @@ public sealed class RequestStore
 
     private sealed class StoreDocument
     {
+        public int SchemaVersion { get; set; } = 2;
         public long NextId { get; set; } = 1;
 
         public int LibraryScanRevision { get; set; }

@@ -180,7 +180,7 @@ public sealed class JellixBridge
             500,
             synchronizeProgress: true,
             cancellationToken).ConfigureAwait(false);
-        var items = requests.Take(500).Select(request => new JellixRequestResponse(
+        var items = requests.Where(request => request.MediaType is "movie" or "series").Take(500).Select(request => new JellixRequestResponse(
             request.Id,
             SafeText(request.Title, 300, "AniWorld"),
             MapStatus(request),

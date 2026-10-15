@@ -4,6 +4,18 @@ using Jellyfin.Plugin.AniWorld.Services;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("MegaKino fork episode selectors remain distinct", CatalogScenarios.MegaKinoSelectorsStayDistinct),
+    ("Gravity Falls rejects unrelated partial matches", CatalogScenarios.GravityFallsRelevance),
+    ("aliases years authors and editions remain distinct", CatalogScenarios.AliasesYearsAndEditions),
+    ("MangaFire is manga, not series", CatalogScenarios.MangaIsNotSeries),
+    ("source capabilities obey category policy and allowlist", CatalogScenarios.CapabilityPolicy),
+    ("catalog selection approval persistence and completion", CatalogScenarios.CatalogLifecycle),
+    ("disabled catalog is blocked at every entry point", CatalogScenarios.DisabledCatalogIsEnforcedEverywhere),
+    ("changed assets never queue a substitute format", CatalogScenarios.AssetChangesDoNotQueueAnotherFormat),
+    ("catalog grants bind user source and numeric ID", CatalogScenarios.CatalogGrantIsBoundToUserAndSource),
+    ("concurrency one still searches every source", CatalogScenarios.AllSourcesAreSearchedWithConcurrencyOne),
+    ("discovery preserves sources and isolates failures", CatalogScenarios.DiscoveryKeepsActualSources),
+    ("unknown categories and mismatched details are rejected", CatalogScenarios.UnknownTypesAreRejected),
     ("available_languages is accepted", AvailableLanguagesIsAccepted),
     ("nullable episode_count is unknown", NullableEpisodeCountIsUnknown),
     ("MangaFire pages may share a chapter URL", MangaFirePagesMayShareUrl),

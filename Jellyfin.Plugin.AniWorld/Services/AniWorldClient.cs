@@ -22,6 +22,8 @@ public sealed class AniWorldClient
     private readonly HttpClient _httpClient;
     private readonly SecretStore _secrets;
     private readonly Func<Configuration.PluginConfiguration?> _configuration;
+    private readonly SemaphoreSlim _metadataLock = new(1, 1);
+    private readonly Dictionary<string, (string Identity, DateTime Expires, JsonElement Data)> _metadata = new(StringComparer.Ordinal);
 
     public AniWorldClient(HttpClient httpClient, SecretStore secrets)
         : this(httpClient, secrets, () => Plugin.Instance?.Configuration)
@@ -48,7 +50,26 @@ public sealed class AniWorldClient
 
     /// <summary>Lädt die Einstellungen von AniWorld (inkl. aktiver Provider).</summary>
     public Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
-        => SendAsync(HttpMethod.Get, "api/settings", null, cancellationToken);
+        => GetMetadataAsync("api/settings", cancellationToken);
+
+    public Task<JsonElement> GetSourcesAsync(CancellationToken cancellationToken)
+        => GetMetadataAsync("api/sources", cancellationToken);
+
+    private async Task<JsonElement> GetMetadataAsync(string path, CancellationToken cancellationToken)
+    {
+        var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes((_configuration()?.AniWorldUrl ?? string.Empty) + "\n" + _secrets.GetApiKey())));
+        await _metadataLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_metadata.TryGetValue(path, out var cached) && cached.Identity == identity && cached.Expires > DateTime.UtcNow)
+                return cached.Data;
+            var data = await SendAsync(HttpMethod.Get, path, null, cancellationToken).ConfigureAwait(false);
+            _metadata[path] = (identity, DateTime.UtcNow.AddSeconds(5), data);
+            return data;
+        }
+        finally { _metadataLock.Release(); }
+    }
 
     /// <summary>Lädt die benutzerdefinierten Pfade samt Standardquellen.</summary>
     public Task<JsonElement> GetCustomPathsAsync(CancellationToken cancellationToken)
@@ -88,12 +109,45 @@ public sealed class AniWorldClient
 
     /// <summary>Sucht nach einem Suchbegriff auf einer bestimmten Site.</summary>
     public Task<JsonElement> SearchAsync(string keyword, string site, CancellationToken cancellationToken)
+        => SearchAsync(keyword, site, null, cancellationToken);
+
+    public Task<JsonElement> SearchAsync(string keyword, string site, string? category, CancellationToken cancellationToken)
         => SendAsync(
             HttpMethod.Post,
             "api/search",
-            new { keyword, site },
+            new { keyword, site, category },
             cancellationToken,
             SearchTimeout);
+
+    public Task<JsonElement> SearchCatalogAsync(string query, string source, string category, CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, $"api/catalog/search?source={Uri.EscapeDataString(source)}&q={Uri.EscapeDataString(query)}&category={Uri.EscapeDataString(category)}", null, cancellationToken, SearchTimeout);
+
+    public Task<JsonElement> GetCatalogDetailsAsync(string source, string id, CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, $"api/catalog/details?source={Uri.EscapeDataString(source)}&id={Uri.EscapeDataString(id)}", null, cancellationToken);
+
+    public Task<JsonElement> BrowseAsync(string path, string source, string category, bool catalog, CancellationToken cancellationToken)
+    {
+        if (catalog)
+            return SendAsync(HttpMethod.Get, $"api/catalog/browse?source={Uri.EscapeDataString(source)}&category={Uri.EscapeDataString(category)}", null, cancellationToken, SearchTimeout);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(path, "^api/[a-z0-9-]+$"))
+            throw new AniWorldException(HttpStatusCode.BadRequest, "Ungültiger Katalogpfad.");
+        return SendAsync(HttpMethod.Get, path + "?category=" + Uri.EscapeDataString(category), null, cancellationToken, SearchTimeout);
+    }
+
+    public async Task<AniWorldQueueResult> QueueCatalogAsync(MediaRequest request, CancellationToken cancellationToken)
+    {
+        var response = await SendAsync(HttpMethod.Post, "api/catalog/download", new
+        {
+            source = request.Source, id = request.CatalogItemId, asset_id = request.CatalogAssetId,
+            request_key = request.SubmissionKey,
+        }, cancellationToken).ConfigureAwait(false);
+        if (response.TryGetProperty("queue_id", out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var id) && id > 0)
+            return new AniWorldQueueResult(id, 1);
+        throw new AniWorldException(HttpStatusCode.BadGateway, "Der Downloader hat keine gültige Katalog-Warteschlangen-ID geliefert.");
+    }
+
+    public Task<AniWorldImage> GetCatalogCoverAsync(string token, CancellationToken cancellationToken)
+        => GetImageFromPathAsync("api/catalog/cover?token=" + Uri.EscapeDataString(token), cancellationToken);
 
     /// <summary>Lädt Seriendetails (Titel, Poster, Beschreibung, Jahr).</summary>
     public Task<JsonElement> GetSeriesAsync(string url, CancellationToken cancellationToken)
@@ -342,6 +396,7 @@ public sealed class AniWorldClient
             title = request.Title,
             series_url = request.SeriesUrl,
             custom_path_id = customPathId,
+            request_key = request.SubmissionKey,
         };
 
     private static AniWorldException InvalidCustomPaths()

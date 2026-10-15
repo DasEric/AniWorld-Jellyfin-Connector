@@ -37,6 +37,9 @@ export default function (view) {
       byId('mfUrl').value = config.AniWorldUrl || 'http://127.0.0.1:8080';
       showKeyStatus(secret.hasApiKey === true);
       byId('mfAutoApprove').checked = config.AutoApproveRequests === true;
+      byId('mfAllowEbooks').checked = config.AllowEbookRequests === true;
+      byId('mfAllowAudiobooks').checked = config.AllowAudiobookRequests === true;
+      byId('mfAllowPodcasts').checked = config.AllowPodcastRequests === true;
       byId('mfAllUsers').checked = config.EnableAllUsers !== false;
       byId('mfMaintenance').checked = config.MaintenanceMode === true;
       byId('mfMaintenanceMessage').value = config.MaintenanceMessage || '';
@@ -58,6 +61,9 @@ export default function (view) {
       delete config.AniWorldApiKey;
       config.AniWorldUrl = byId('mfUrl').value.trim();
       config.AutoApproveRequests = byId('mfAutoApprove').checked;
+      config.AllowEbookRequests = byId('mfAllowEbooks').checked;
+      config.AllowAudiobookRequests = byId('mfAllowAudiobooks').checked;
+      config.AllowPodcastRequests = byId('mfAllowPodcasts').checked;
       config.EnableAllUsers = byId('mfAllUsers').checked;
       config.MaintenanceMode = byId('mfMaintenance').checked;
       config.MaintenanceMessage = byId('mfMaintenanceMessage').value.trim();
