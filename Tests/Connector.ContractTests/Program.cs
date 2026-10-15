@@ -2,8 +2,20 @@ using System.Text.Json;
 using Jellyfin.Plugin.AniWorld.Models;
 using Jellyfin.Plugin.AniWorld.Services;
 
+if (args.Contains("--serve-http-contract", StringComparer.Ordinal))
+{
+    await HttpContractScenarios.RunAsync(true);
+    return 0;
+}
+
 var tests = new (string Name, Action Run)[]
 {
+    ("Jellix selection follows current connector approval or direct-download policy", CatalogScenarios.JellixSelectionUsesCurrentConnectorPolicy),
+    ("Jellix selection rechecks maintenance sources and user ownership", CatalogScenarios.JellixSelectionRechecksMaintenanceAndSourcePolicy),
+    ("real HTTP/MVC discovery search and partial failures use Jellyfin defaults", HttpContractScenarios.RealJellyfinWireContract),
+    ("controller wire JSON matches actual Jellyfin serializer defaults", CatalogScenarios.ControllerJsonMatchesJellyfinDefaultAndCamelCase),
+    ("source errors retain HTTP context without suppressing other results", CatalogScenarios.SearchErrorsKeepHttpContextAndOtherSources),
+    ("legacy sources 404 preserves settings fallback", CatalogScenarios.LegacySources404UsesSettingsFallback),
     ("two search groups respect permissions", CatalogScenarios.TwoSearchGroupsRespectPermissions),
     ("grouped search keeps films series manga and unknown types", CatalogScenarios.GroupedVideoSearchKeepsMixedAndUnknownTypes),
     ("grouped discovery keeps missing types without downloader categories", CatalogScenarios.GroupedDiscoveryKeepsMissingTypes),

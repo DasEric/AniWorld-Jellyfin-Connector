@@ -247,7 +247,7 @@ public sealed class AniWorldClient
                 requestToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                throw SafeUpstreamError(response.StatusCode);
+                throw SafeUpstreamError(response.StatusCode, HttpMethod.Get.Method, path);
             }
 
             var mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
@@ -445,7 +445,7 @@ public sealed class AniWorldClient
             {
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw SafeUpstreamError(response.StatusCode);
+                    throw SafeUpstreamError(response.StatusCode, method.Method, relativePath);
                 }
 
                 if (response.Content.Headers.ContentLength > MaxResponseBytes)
@@ -534,9 +534,13 @@ public sealed class AniWorldClient
         }
     }
 
-    private static AniWorldException SafeUpstreamError(HttpStatusCode statusCode)
+    private static AniWorldException SafeUpstreamError(HttpStatusCode statusCode, string method, string relativePath)
     {
-        return statusCode switch
+        // Only the fixed API path is diagnostic context. Never expose query
+        // strings, credentials, response bodies or deployment URLs to clients.
+        var endpoint = relativePath.Split('?', 2)[0].TrimStart('/');
+        if (!System.Text.RegularExpressions.Regex.IsMatch(endpoint, "^api/[a-zA-Z0-9/-]+$")) endpoint = "Downloader-API";
+        AniWorldException error = statusCode switch
         {
             HttpStatusCode.BadRequest => new(statusCode, "AniWorld hat die Anfrage abgelehnt."),
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(
@@ -546,8 +550,11 @@ public sealed class AniWorldClient
             HttpStatusCode.NotFound => new(statusCode, "Der angeforderte Inhalt wurde in AniWorld nicht gefunden."),
             HttpStatusCode.TooManyRequests => new(statusCode, "AniWorld begrenzt derzeit weitere Anfragen. Bitte später erneut versuchen."),
             HttpStatusCode.ServiceUnavailable => new(statusCode, "AniWorld ist derzeit nicht verfügbar."),
-            _ => new(HttpStatusCode.BadGateway, "AniWorld konnte die Anfrage nicht verarbeiten."),
+            _ => new(HttpStatusCode.BadGateway, $"H0melab Downloader meldet HTTP {(int)statusCode} bei {method} /{endpoint}. Details stehen im Downloader-Protokoll."),
         };
+        // Preserve 404/500/etc. as well as auth errors: capability fallback and
+        // per-source diagnostics depend on the actual upstream status.
+        return new AniWorldException(error.StatusCode, error.Message, statusCode);
     }
 }
 

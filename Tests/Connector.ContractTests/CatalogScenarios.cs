@@ -1,12 +1,107 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Jellyfin.Extensions.Json;
+using Jellyfin.Plugin.AniWorld.Api;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Jellyfin.Plugin.AniWorld.Configuration;
 using Jellyfin.Plugin.AniWorld.Models;
 using Jellyfin.Plugin.AniWorld.Services;
 
 internal static class CatalogScenarios
 {
+    internal static void JellixSelectionUsesCurrentConnectorPolicy()
+    {
+        foreach (var automatic in new[] { false, true })
+        {
+            using var fixture = new Fixture { VideoPlanning = true };
+            fixture.Config.AllowedSources = "moflix";
+            // Change the mode after search: submission must read the current connector setting.
+            fixture.Config.AutoApproveRequests = !automatic;
+            var selection = fixture.Application.SearchAsync("user", "Gravity Falls", "all", "series", true, CancellationToken.None).GetAwaiter().GetResult();
+            var token = selection.Items.Single(item => item.Title == "Willkommen in Gravity Falls").Token;
+            fixture.Config.AutoApproveRequests = automatic;
+            Reject(() => fixture.Application.SubmitSelectionAsync("other-user", "Other", token, CancellationToken.None).GetAwaiter().GetResult());
+            var result = fixture.Application.SubmitSelectionAsync("user", "User", token, CancellationToken.None).GetAwaiter().GetResult();
+            Check(result.Request?.UserId == "user");
+            Check(result.Request?.Status == (automatic ? RequestStatuses.Queued : RequestStatuses.Pending));
+            Check(fixture.DownloadCalls == (automatic ? 1 : 0));
+            Check((fixture.Application.ListForUserAsync("other-user", 500, false, CancellationToken.None).GetAwaiter().GetResult()).Count == 0);
+            Reject(() => fixture.Application.SubmitSelectionAsync("user", "User", token, CancellationToken.None).GetAwaiter().GetResult());
+            if (!automatic)
+            {
+                var approved = fixture.Application.ApproveAsync(result.Request!.Id, "admin", CancellationToken.None).GetAwaiter().GetResult();
+                if (approved.Status != RequestStatuses.Queued) throw new InvalidOperationException("Approval result: " + approved.Status + " / " + approved.Error);
+                Check(approved.Status == RequestStatuses.Queued && fixture.DownloadCalls == 1);
+                fixture.Application.ApproveAsync(result.Request.Id, "admin", CancellationToken.None).GetAwaiter().GetResult();
+                Check(fixture.DownloadCalls == 1);
+            }
+            Check(fixture.LastPayload.GetProperty("language").GetString() == fixture.Config.DefaultLanguage);
+            Check(fixture.LastPayload.GetProperty("provider").GetString() == fixture.Config.DefaultProvider);
+            Check(fixture.LastPayload.GetProperty("episodes").GetArrayLength() == 2);
+        }
+    }
+
+    internal static void JellixSelectionRechecksMaintenanceAndSourcePolicy()
+    {
+        using var fixture = new Fixture { VideoPlanning = true };
+        fixture.Config.AllowedSources = "moflix";
+        var selection = fixture.Application.SearchAsync("user", "Gravity Falls", "all", "series", true, CancellationToken.None).GetAwaiter().GetResult();
+        fixture.Config.MaintenanceMode = true;
+        Reject(() => fixture.Application.SubmitSelectionAsync("user", "User", selection.Items.Single(item => item.Title == "Willkommen in Gravity Falls").Token, CancellationToken.None).GetAwaiter().GetResult());
+        fixture.Config.MaintenanceMode = false;
+        selection = fixture.Application.SearchAsync("user", "Gravity Falls", "all", "series", true, CancellationToken.None).GetAwaiter().GetResult();
+        fixture.Config.AllowedSources = "sto";
+        Reject(() => fixture.Application.SubmitSelectionAsync("user", "User", selection.Items.Single(item => item.Title == "Willkommen in Gravity Falls").Token, CancellationToken.None).GetAwaiter().GetResult());
+        Check(fixture.DownloadCalls == 0);
+        Check(fixture.Store.ListAllAsync(100, CancellationToken.None).GetAwaiter().GetResult().Count == 0);
+    }
+
+    internal static void ControllerJsonMatchesJellyfinDefaultAndCamelCase()
+    {
+        using var fixture = new Fixture { MissingBrowseTypes = true };
+        var controller = fixture.Controller;
+        foreach (var options in new[] { JsonDefaults.Options, JsonDefaults.PascalCaseOptions, JsonDefaults.CamelCaseOptions })
+        {
+            var discovery = (OkObjectResult)controller.Discover("video", "moflix", CancellationToken.None).GetAwaiter().GetResult();
+            using var wire = JsonDocument.Parse(JsonSerializer.Serialize(discovery.Value, options));
+            var section = wire.RootElement.GetProperty("sections")[0];
+            Check(section.TryGetProperty("source", out var source) && source.GetString() == "moflix");
+            Check(section.GetProperty("label").GetString() == "Moflix");
+            Check(section.GetProperty("items").GetArrayLength() == 1);
+            Check(!section.TryGetProperty("error", out var noError) || noError.ValueKind == JsonValueKind.Null);
+            fixture.FailMoflix = true;
+            var failure = (OkObjectResult)controller.Discover("video", "moflix", CancellationToken.None).GetAwaiter().GetResult();
+            using var errorWire = JsonDocument.Parse(JsonSerializer.Serialize(failure.Value, options));
+            Check(errorWire.RootElement.GetProperty("sections")[0].GetProperty("error").ValueKind == JsonValueKind.String);
+            fixture.FailMoflix = false;
+            var search = (OkObjectResult)controller.Search("gravity falls", "moflix", "video", CancellationToken.None).GetAwaiter().GetResult();
+            using var searchWire = JsonDocument.Parse(JsonSerializer.Serialize(search.Value, options));
+            var group = searchWire.RootElement.GetProperty("groups")[0];
+            Check(group.GetProperty("source").GetString() == "moflix");
+            Check(group.GetProperty("data").GetProperty("results").GetArrayLength() == 3);
+        }
+    }
+
+    internal static void SearchErrorsKeepHttpContextAndOtherSources()
+    {
+        using var fixture = new Fixture { FailVideoSearch = true };
+        var result = fixture.Application.SearchAsync("user", "gravity falls", "all", "video", false, CancellationToken.None).GetAwaiter().GetResult();
+        Check(result.Groups.Count == 3);
+        var failure = result.Groups.Single(group => group.Source == "moflix");
+        Check(failure.Error!.Contains("HTTP 500", StringComparison.Ordinal));
+        Check(failure.Error.Contains("api/search", StringComparison.Ordinal));
+        Check(!failure.Error.Contains("contract-test-key", StringComparison.Ordinal));
+        Check(result.Groups.Where(group => group.Source != "moflix").All(group => group.Error is null && group.Data!.Value.GetProperty("results").GetArrayLength() > 0));
+    }
+
+    internal static void LegacySources404UsesSettingsFallback()
+    {
+        using var fixture = new Fixture { LegacySources = true };
+        var sources = fixture.Application.GetAllowedSourcesAsync("user", CancellationToken.None).GetAwaiter().GetResult();
+        Check(sources.Count == 3 && sources.Any(source => source.Id == "sto"));
+    }
     internal static void MegaKinoSelectorsStayDistinct()
     {
         using var data = JsonDocument.Parse("""{"episodes":[{"url":"https://megakino.test/serials/example#mkep=1","episode_number":1},{"url":"https://megakino.test/serials/example#mkep=2","episode_number":2}]}""");
@@ -225,9 +320,9 @@ internal static class CatalogScenarios
         Check(submitted.Request.Episodes[0].SelectedPages!.SequenceEqual([1]));
     }
 
-    private static void Check(bool value)
+    private static void Check(bool value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? expression = null)
     {
-        if (!value) throw new InvalidOperationException("Catalog contract assertion failed.");
+        if (!value) throw new InvalidOperationException("Catalog contract assertion failed: " + expression);
     }
 
     private static void Reject(Action action)
@@ -237,7 +332,7 @@ internal static class CatalogScenarios
         throw new InvalidOperationException("Expected application rejection.");
     }
 
-    private sealed class Fixture : IDisposable
+    internal sealed class Fixture : IDisposable
     {
         internal const string Settings = """{"available_sites":[{"key":"sto"},{"key":"moflix"},{"key":"mangafire"}],"enable_sto":true,"enable_moflix":true,"enable_mangafire":true}""";
         internal const string Sources = """
@@ -254,12 +349,18 @@ internal static class CatalogScenarios
         internal MediaAccessGrantStore Grants { get; } = new();
         internal RequestStore Store { get; }
         internal AniWorldRequestApplicationService Application { get; }
+        internal AniWorldRequestsController Controller { get; }
+        internal AniWorldClient Client { get; }
+        internal SecretStore Secrets { get; }
         internal int DownloadCalls;
         internal int SearchCalls;
         internal bool AssetAvailable = true;
         internal bool FailMoflix;
         internal bool MissingBrowseTypes;
         internal bool MalformedSearch;
+        internal bool FailVideoSearch;
+        internal bool LegacySources;
+        internal bool VideoPlanning;
         internal List<JsonElement> VideoRequests { get; } = [];
         internal List<string> BrowseQueries { get; } = [];
         internal JsonElement LastPayload;
@@ -270,10 +371,16 @@ internal static class CatalogScenarios
             Store = new RequestStore(Directory);
             var secrets = new SecretStore(Directory);
             secrets.SetApiKey("contract-test-key");
+            Secrets = secrets;
             _http = new HttpClient(new Handler(Respond));
             var client = new AniWorldClient(_http, secrets, () => Config);
+            Client = client;
             Application = new AniWorldRequestApplicationService(client, Store, Grants, new UserRateLimiter(),
-                new JellyfinLibraryAvailabilityService(null!), new JellixSelectionTokenStore(), () => Config);
+                new JellyfinLibraryAvailabilityService(System.Reflection.DispatchProxy.Create<MediaBrowser.Controller.Library.ILibraryManager, EmptyLibraryProxy>()), new JellixSelectionTokenStore(), () => Config);
+            Controller = new AniWorldRequestsController(client, Grants, new UserRateLimiter(), secrets, Application)
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+            };
         }
 
         internal SubmitMediaRequestResult Submit() => Application.SubmitCatalogAsync("user", "User", new CatalogMediaRequest
@@ -288,7 +395,11 @@ internal static class CatalogScenarios
             Check(request.Headers.Contains("X-API-Key"));
             object data;
             if (path.EndsWith("/api/settings", StringComparison.Ordinal)) data = JsonSerializer.Deserialize<JsonElement>(Settings);
-            else if (path.EndsWith("/api/sources", StringComparison.Ordinal)) data = JsonSerializer.Deserialize<JsonElement>(Sources);
+            else if (path.EndsWith("/api/sources", StringComparison.Ordinal))
+            {
+                if (LegacySources) return new HttpResponseMessage(HttpStatusCode.NotFound);
+                data = JsonSerializer.Deserialize<JsonElement>(Sources);
+            }
             else if (path.EndsWith("/api/catalog/details", StringComparison.Ordinal))
                 data = new { id = "42", source = "gutenberg", media_kind = "ebook", title = "Dune", author = "Frank Herbert", language = "en", assets = AssetAvailable ? new[] { new { id = "epub", label = "EPUB", extension = "epub", downloaded = false } } : [] };
             else if (path.EndsWith("/api/catalog/download", StringComparison.Ordinal))
@@ -304,15 +415,30 @@ internal static class CatalogScenarios
                 data = new { items = new[] { new { id = "42", title = "Dune", media_kind = kind, author = "Frank Herbert" } } };
             }
             else if (path.EndsWith("/api/series", StringComparison.Ordinal))
-                data = new { title = "Example", description = "Manga" };
+                data = VideoPlanning ? new { title = "Gravity Falls", is_movie = false } : (object)new { title = "Example", description = "Manga" };
             else if (path.EndsWith("/api/seasons", StringComparison.Ordinal))
-                data = new { seasons = new[] { new { url = "https://mangafire.to/title/example/chapter/1", season_number = 1, episode_count = 1, are_movies = false } } };
+                data = VideoPlanning
+                    ? new { seasons = new[] { new { url = "https://example.test/series/season-1", season_number = 1, episode_count = 2, are_movies = false } } }
+                    : (object)new { seasons = new[] { new { url = "https://mangafire.to/title/example/chapter/1", season_number = 1, episode_count = 1, are_movies = false } } };
             else if (path.EndsWith("/api/episodes", StringComparison.Ordinal))
-                data = new { episodes = new[] { new { url = "https://mangafire.to/title/example/chapter/1", chapter_url = "https://mangafire.to/title/example/chapter/1", episode_number = 1, page_number = 1 } } };
+                data = VideoPlanning
+                    ? new { episodes = new[] {
+                        new { url = "https://example.test/series/season-1/episode-1", episode_number = 1, available_languages = new[] { "German Dub" } },
+                        new { url = "https://example.test/series/season-1/episode-2", episode_number = 2, available_languages = new[] { "German Dub" } } } }
+                    : (object)new { episodes = new[] { new { url = "https://mangafire.to/title/example/chapter/1", chapter_url = "https://mangafire.to/title/example/chapter/1", episode_number = 1, page_number = 1 } } };
+            else if (path.EndsWith("/api/providers", StringComparison.Ordinal)) data = new { providers = new Dictionary<string, string[]> { ["German Dub"] = ["VOE"] } };
+            else if (path.EndsWith("/api/custom-paths", StringComparison.Ordinal)) data = new { paths = Array.Empty<object>() };
+            else if (path.EndsWith("/api/download", StringComparison.Ordinal))
+            {
+                DownloadCalls++;
+                LastPayload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement.Clone();
+                data = new { queue_id = 88 };
+            }
             else if (path.EndsWith("/api/search", StringComparison.Ordinal))
             {
                 var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement.Clone();
                 lock (VideoRequests) VideoRequests.Add(payload);
+                if (FailVideoSearch && payload.GetProperty("site").GetString() == "moflix") return new HttpResponseMessage(HttpStatusCode.InternalServerError);
                 data = MalformedSearch ? new { unexpected = true } : (object)new { results = new object[] {
                     new { title = "Gravity Falls", url = "https://example.test/movie", media_type = "movie" },
                     new { title = "Willkommen in Gravity Falls", url = "https://example.test/series", media_type = "series" },
@@ -342,4 +468,10 @@ internal static class CatalogScenarios
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => respond(request, cancellationToken);
     }
+}
+
+public class EmptyLibraryProxy : System.Reflection.DispatchProxy
+{
+    protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        => targetMethod?.Name == "GetItemList" ? Array.Empty<MediaBrowser.Controller.Entities.BaseItem>() : null;
 }

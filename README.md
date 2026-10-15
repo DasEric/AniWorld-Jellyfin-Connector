@@ -1,10 +1,10 @@
 # AniWorld Requests (Jellyfin Plugin)
 
-## Version 1.3.1: gemeinsame Suche und H0melab Downloader
+## Version 1.3.2: gemeinsame Suche und Jellyfin-JSON-Kompatibilität
 
 Der Connector bietet genau zwei Suchbereiche: **Serien & Filme** (einschließlich Anime und Manga) sowie **Bücher & Audio** (E-Books, Hörbücher und Podcasts). Eine Quellenauswahl ist nicht nötig: Alle passenden aktivierten und im Plugin erlaubten Quellen werden automatisch durchsucht. E-Books, Hörbücher und Podcasts können im Jellyfin-Plugin unabhängig freigegeben werden und sind zunächst ausgeschaltet; der zweite Bereich erscheint erst bei mindestens einer Freigabe.
 
-Für den korrigierten Suchablauf zuerst **H0melab Downloader 2.1.1** und danach **Connector 1.3.1** einsetzen. Die eigenständige Downloader-Oberfläche besitzt keine zusätzliche Kategorieauswahl; ihre bisherigen Quellenreiter und die Bücher-/Audio-Seite bleiben bestehen. Gruppierung und Relevanzprüfung erfolgen ausschließlich im Jellyfin-Connector.
+Für den korrigierten Suchablauf **H0melab Downloader 2.1.1** und **Connector 1.3.2** einsetzen. Version 1.3.2 behebt zusätzlich den Empfehlungsfehler durch Jellyfins Standard-JSON-Profil; ein weiterer Downloader-Umbau ist dafür nicht erforderlich. Die eigenständige Downloader-Oberfläche besitzt keine zusätzliche Kategorieauswahl; ihre bisherigen Quellenreiter und die Bücher-/Audio-Seite bleiben bestehen. Gruppierung und Relevanzprüfung erfolgen ausschließlich im Jellyfin-Connector.
 
 Die Suche berücksichtigt vollständige Suchbegriffe und sortiert Ergebnisse quellenübergreifend nach Relevanz. Fehlende Typmetadaten entfernen keine Treffer aus dem gemeinsamen Film-/Serien-/Manga-Bereich; der konkrete Typ wird bei Bedarf beim Öffnen ermittelt. Die Startseite zeigt korrekt zugeordnete Bereiche aller passenden aktivierten Quellen. „Gleichzeitige Quellenabfragen“ begrenzt Parallelität; weitere Quellen werden nicht abgeschnitten. Fehlerhafte Quellenantworten erscheinen als Fehler statt als leere Trefferliste.
 
@@ -51,6 +51,10 @@ Damit das Plugin Downloads starten kann, muss es mit deinem AniWorld-Downloader 
 3. Füge den soeben kopierten **AniWorld API-Key** ein.
 4. Speichere die Einstellungen.
 5. Lade die Jellyfin-Weboberfläche in deinem Browser neu (meistens `F5` oder `Strg + F5`). An der linken Seitenleiste taucht nun der Tab "AniWorld Requests" auf!
+
+## Discord mit Jellix 0.5.0
+
+Jellix verwendet die vorhandene In-Process-Schnittstelle `Jellyfin.Plugin.AniWorld.Integration.JellixBridge` (Protokoll 1). URL, API-Key, Quellen, Sprache/Provider, Benutzerlimits und die Einstellung **Downloads ohne Admin-Freigabe direkt starten** bleiben ausschließlich hier im Connector. Ist sie aus, warten auch Discord-Anfragen auf die Freigabe in der Connector-Verwaltung; ist sie an, werden gültige Anfragen direkt eingereiht. Jellix braucht keinen eigenen Downloader-API-Key. Nach Installation beider Plugins Jellyfin neu starten. Downloader-Dateien und dessen nativer Discord-Bot werden dabei nicht verändert.
 
 ## Migration von MediaForge
 Dieses Projekt ist ein Rewrite des ehemaligen MediaForge-Connectors. Das alte MediaForge-Python-Modul wird **nicht** mehr benötigt, da dieses Plugin nun vollständig nativ mit der API des AniWorld-Downloaders spricht.

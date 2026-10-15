@@ -1,5 +1,20 @@
 # Änderungen
 
+## 1.3.2
+
+- Regressionstests für Jellix 0.5.0 bestätigen die vorhandene Protokoll-v1-Anbindung: Benutzerbindung, einmalige Auswahl, aktuelle Admin-Freigabe-/Direktdownload-Einstellung, Wartungsmodus, Quellenfreigaben und Downloadvorgaben bleiben zentral im Connector. Keine zweite Freigabepolicy in Jellix und keine Änderung am Downloader.
+- Behebt einen reproduzierten Wire-Format-Fehler bei Empfehlungen: Jellyfins Standardprofil serialisiert nicht annotierte Record-Eigenschaften als `Source`, `Items` usw., die Oberfläche erwartet `source`, `items`. Die Empfehlungsabschnitte besitzen jetzt explizite JSON-Feldnamen, unabhängig vom Serializer-Profil.
+- Die Regressionstests verwenden den tatsächlichen Controller mit Jellyfins Standard-, PascalCase- und CamelCase-JSON-Optionen. Ein zusätzlicher lokaler Kestrel-/MVC-HTTP-Test verwendet Jellyfins echten JSON-Output-Formatierer und prüft Empfehlungen, Suchtreffer und ausgefallene Einzelquellen.
+- Allgemeine Downloader-Fehler enthalten statt der unspezifischen Meldung den tatsächlichen HTTP-Status, die Methode und den festen API-Pfad. API-Keys, Querystrings, Serveradressen und ungeprüfte Fehlerantworten werden nicht ausgegeben.
+- Alle tatsächlichen Upstream-Statuscodes bleiben intern erhalten. Dadurch funktioniert insbesondere der bereits vorgesehene Fallback bei `/api/sources` mit HTTP 404 wieder.
+- Die zwei Suchbereiche und die entfernte Quellenauswahl bleiben unverändert. Keine Änderung am H0melab Downloader, keine Moflix-Reparatur und keine Datenmigration.
+
+### Aktualisierung
+
+Nur den Connector auf **1.3.2** aktualisieren, Jellyfin neu starten und offene Webclients vollständig neu laden. Der Downloader bleibt auf **2.1.1**. Der Push des Tags **v1.3.2** startet den bestehenden Release-/Repository-Workflow; keine zweite GitHub-Release manuell erstellen.
+
+Der Browser-/HTTP-Test prüft echte Plugin-Antworten über MVC, verwendet aber kontrollierte Downloader-Antworten. Er bestätigt keine Live-Erreichbarkeit externer Quellen. Ein aktuell ausgefallenes Moflix bleibt als Einzelquellenfehler sichtbar und darf funktionierende andere Quellen nicht unterdrücken.
+
 ## 1.3.1
 
 - Genau zwei Suchbereiche nur im Jellyfin-Anfragensystem: **Serien & Filme** einschließlich Anime und Manga sowie **Bücher & Audio** für freigegebene E-Books, Hörbücher und Podcasts.

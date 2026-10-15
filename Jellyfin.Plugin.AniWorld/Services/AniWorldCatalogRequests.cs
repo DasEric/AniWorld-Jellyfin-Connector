@@ -192,4 +192,8 @@ public sealed record CatalogDetail(
     [property: JsonPropertyName("cover_url")] string CoverUrl,
     [property: JsonPropertyName("assets")] IReadOnlyList<CatalogAssetOption> Assets);
 
-public sealed record DiscoverySection(string Source, string Label, IReadOnlyList<JsonElement> Items, string? Error);
+public sealed record DiscoverySection(
+    [property: JsonPropertyName("source")] string Source,
+    [property: JsonPropertyName("label")] string Label,
+    [property: JsonPropertyName("items")] IReadOnlyList<JsonElement> Items,
+    [property: JsonPropertyName("error")] string? Error);
