@@ -1,15 +1,5 @@
 # AniWorld Requests (Jellyfin Plugin)
 
-## Version 1.3.2: gemeinsame Suche und Jellyfin-JSON-Kompatibilität
-
-Der Connector bietet genau zwei Suchbereiche: **Serien & Filme** (einschließlich Anime und Manga) sowie **Bücher & Audio** (E-Books, Hörbücher und Podcasts). Eine Quellenauswahl ist nicht nötig: Alle passenden aktivierten und im Plugin erlaubten Quellen werden automatisch durchsucht. E-Books, Hörbücher und Podcasts können im Jellyfin-Plugin unabhängig freigegeben werden und sind zunächst ausgeschaltet; der zweite Bereich erscheint erst bei mindestens einer Freigabe.
-
-Für den korrigierten Suchablauf **H0melab Downloader 2.1.1** und **Connector 1.3.2** einsetzen. Version 1.3.2 behebt zusätzlich den Empfehlungsfehler durch Jellyfins Standard-JSON-Profil; ein weiterer Downloader-Umbau ist dafür nicht erforderlich. Die eigenständige Downloader-Oberfläche besitzt keine zusätzliche Kategorieauswahl; ihre bisherigen Quellenreiter und die Bücher-/Audio-Seite bleiben bestehen. Gruppierung und Relevanzprüfung erfolgen ausschließlich im Jellyfin-Connector.
-
-Die Suche berücksichtigt vollständige Suchbegriffe und sortiert Ergebnisse quellenübergreifend nach Relevanz. Fehlende Typmetadaten entfernen keine Treffer aus dem gemeinsamen Film-/Serien-/Manga-Bereich; der konkrete Typ wird bei Bedarf beim Öffnen ermittelt. Die Startseite zeigt korrekt zugeordnete Bereiche aller passenden aktivierten Quellen. „Gleichzeitige Quellenabfragen“ begrenzt Parallelität; weitere Quellen werden nicht abgeschnitten. Fehlerhafte Quellenantworten erscheinen als Fehler statt als leere Trefferliste.
-
-Kataloganfragen verwenden eine eigene Datei-/Formatauswahl. Abgeschlossene Buch-/Audiodownloads sind nicht automatisch ein Nachweis für Jellyfin-Verfügbarkeit und lösen keine Film-/Serienscans aus. Einzelheiten zu Einführung, Daten und Rückweg stehen im [Changelog](CHANGELOG.md).
-
 Dieses Plugin ermöglicht es Benutzern deines Jellyfin-Servers, direkt im Web-Interface nach Filmen und Serien auf AniWorld (und weiteren konfigurierten Providern) zu suchen und Download-Anfragen zu stellen. 
 
 Das Plugin kommuniziert direkt mit der REST-API des [H0melab-Downloader-Forks](https://github.com/DasEric/H0melab-Downloader-V2) und leitet freigegebene Anfragen direkt an diesen weiter. Im Connector werden ausschließlich Quellen angezeigt und akzeptiert, die im Downloader selbst aktiviert sind. Bei nicht lesbaren Quelleinstellungen erscheint ein Verbindungsfehler.
