@@ -10,6 +10,23 @@ if (args.Contains("--serve-http-contract", StringComparer.Ordinal))
 
 var tests = new (string Name, Action Run)[]
 {
+    ("central destinations override site defaults without a local override", MediaLifecycleScenarios.CentralDestinationsWorkWithoutLocalOverride),
+    ("conflicting central destinations are never overridden", MediaLifecycleScenarios.ConflictingCentralDestinationsAreNotOverridden),
+    ("grouped show references and destination wire fields survive serialization", MediaLifecycleScenarios.MediaDestinationWireFieldsAreExplicit),
+    ("typed client construction and movie-only follow-up scans are correct", MediaLifecycleScenarios.TypedClientConstructionIsUnambiguous),
+    ("file receipts report actual audio mismatch and unknown tags", MediaLifecycleScenarios.ReceiptsReportActualLanguageInsteadOfRequestedLabel),
+    ("all episode offers contribute language coverage", MediaLifecycleScenarios.LanguagesCoverAllEpisodes),
+    ("partial language coverage needs explicit consent", MediaLifecycleScenarios.PartialSelectionRequiresConsent),
+    ("providers are verified per episode", MediaLifecycleScenarios.ProviderNeverComesFromOnlyTheFirstEpisode),
+    ("missing languages never silently fall back", MediaLifecycleScenarios.NoInventedLanguageOrJellixFallback),
+    ("audio and subtitle streams are not interchangeable", MediaLifecycleScenarios.AudioAndSubtitlesAreDifferent),
+    ("different language requests are not duplicates", MediaLifecycleScenarios.DifferentLanguagesAreNotDuplicateRequests),
+    ("series route overrides a movie source default", MediaLifecycleScenarios.SeriesRoutingOverridesMovieSiteDefault),
+    ("mixed franchises route movies and series separately", MediaLifecycleScenarios.MixedMoviesAndSeriesKeepTheirOwnTargets),
+    ("missing mount never falls back", MediaLifecycleScenarios.MissingMountNeverFallsBack),
+    ("ownership survives history and restart", MediaLifecycleScenarios.OwnershipPersistsWithoutRequestHistory),
+    ("deletion rechecks owner and includes only own series files", MediaLifecycleScenarios.DeletionChecksUserAgainAndIncludesOwnSeriesOnly),
+    ("mount validation checks a real shared file", MediaLifecycleScenarios.SharedMountProbeChecksActualFile),
     ("Jellix selection follows current connector approval or direct-download policy", CatalogScenarios.JellixSelectionUsesCurrentConnectorPolicy),
     ("Jellix selection rechecks maintenance sources and user ownership", CatalogScenarios.JellixSelectionRechecksMaintenanceAndSourcePolicy),
     ("real HTTP/MVC discovery search and partial failures use Jellyfin defaults", HttpContractScenarios.RealJellyfinWireContract),

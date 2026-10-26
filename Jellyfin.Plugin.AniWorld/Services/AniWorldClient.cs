@@ -6,7 +6,7 @@ using Jellyfin.Plugin.AniWorld.Models;
 namespace Jellyfin.Plugin.AniWorld.Services;
 
 /// <summary>Server-side client für den AniWorld-Downloader.</summary>
-public sealed class AniWorldClient
+public sealed partial class AniWorldClient
 {
     private const int MaxResponseBytes = 16 * 1024 * 1024;
     private const int MaxImageBytes = 8 * 1024 * 1024;
@@ -21,6 +21,8 @@ public sealed class AniWorldClient
     };
     private readonly HttpClient _httpClient;
     private readonly SecretStore _secrets;
+    private readonly MediaTargetRouting? _routing;
+    private readonly DownloadOwnershipStore? _ownership;
     private readonly Func<Configuration.PluginConfiguration?> _configuration;
     private readonly SemaphoreSlim _metadataLock = new(1, 1);
     private readonly Dictionary<string, (string Identity, DateTime Expires, JsonElement Data)> _metadata = new(StringComparer.Ordinal);
@@ -30,14 +32,26 @@ public sealed class AniWorldClient
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public AniWorldClient(HttpClient httpClient, SecretStore secrets, MediaTargetRouting routing, DownloadOwnershipStore ownership)
+        : this(httpClient, secrets)
+    {
+        _routing = routing;
+        _ownership = ownership;
+    }
+
     internal AniWorldClient(
         HttpClient httpClient,
         SecretStore secrets,
-        Func<Configuration.PluginConfiguration?> configuration)
+        Func<Configuration.PluginConfiguration?> configuration,
+        MediaTargetRouting? routing = null,
+        DownloadOwnershipStore? ownership = null)
     {
         _httpClient = httpClient;
         _secrets = secrets;
         _configuration = configuration;
+        _routing = routing;
+        _ownership = ownership;
     }
 
     /// <summary>Prüft ob AniWorld erreichbar ist.</summary>
@@ -174,8 +188,8 @@ public sealed class AniWorldClient
     }
 
     /// <summary>Lädt die verfügbaren Provider/Hoster für eine Episode.</summary>
-    public Task<JsonElement> GetProvidersAsync(string url, CancellationToken cancellationToken)
-        => GetWithUrlAsync("api/providers", url, cancellationToken);
+    public Task<JsonElement> GetProvidersAsync(string url, CancellationToken cancellationToken, bool refresh = false)
+        => SendAsync(HttpMethod.Get, $"api/providers?url={Uri.EscapeDataString(url)}&cache=1{(refresh ? "&refresh=1" : "")}", null, cancellationToken, SearchTimeout);
 
     /// <summary>
     /// Lädt den aktuellen Queue-Status. Da AniWorld keinen gefilterten
@@ -291,10 +305,33 @@ public sealed class AniWorldClient
     /// <summary>Reiht einen Download in die AniWorld-Queue ein.</summary>
     public async Task<AniWorldQueueResult> QueueAsync(MediaRequest request, CancellationToken cancellationToken)
     {
-        // AniWorld wählt den Standardpfad einer Quelle nur in seiner Weboberfläche
-        // vor. Die API benötigt die custom_path_id ausdrücklich im Downloadaufruf.
+        // Site defaults are a legacy fallback only. Central typed destinations
+        // take precedence and are revalidated by the downloader before writing.
         var customPaths = await GetCustomPathsAsync(cancellationToken).ConfigureAwait(false);
         var customPathId = SelectDefaultPathId(customPaths, request.Source);
+        if (request.Episodes.Any(item => item.MediaType is "movie" or "series"))
+        {
+            var capabilities = await GetConnectorCapabilitiesAsync(cancellationToken).ConfigureAwait(false);
+            if (request.Episodes.Count > capabilities.MaxEntries)
+                throw new AniWorldException(HttpStatusCode.Conflict, "Die Auswahl überschreitet die vom Downloader bestätigte Auftragsgröße. Bitte den Downloader aktualisieren oder eine kleinere Auswahl treffen.");
+            var items = new List<AniWorldDownloadItem>();
+            foreach (var item in request.Episodes)
+            {
+                var central = capabilities.MediaTargets;
+                var pathId = _configuration()?.EnableMediaRouting == true
+                    ? (_routing ?? throw new AniWorldException(HttpStatusCode.ServiceUnavailable, "Die Zielzuordnung ist nicht verfügbar.")).Resolve(item.MediaType!, capabilities.Paths)
+                    : central?.Enabled == true ? (item.MediaType == "movie" ? central.Movie : central.Series) : customPathId;
+                if (central?.Enabled == true && pathId != (item.MediaType == "movie" ? central.Movie : central.Series))
+                    throw new AniWorldException(HttpStatusCode.Conflict, "Die Medienziele wurden im Downloader geändert. Bitte die Mount-/Bibliothekszuordnung neu laden und prüfen.");
+                var root = capabilities.Paths.SingleOrDefault(path => path.Id == pathId)
+                    ?? throw new AniWorldException(HttpStatusCode.Conflict, "Das Downloadziel existiert nicht mehr.");
+                items.Add(new AniWorldDownloadItem(item.Url) { Language = item.Language, Provider = item.Provider,
+                    MediaType = item.MediaType, CustomPathId = pathId, TargetRoot = root.Path });
+            }
+            request.EpisodesJson = JsonSerializer.Serialize(items);
+            customPathId = items.Select(item => item.CustomPathId).Distinct().Count() == 1 ? items[0].CustomPathId : null;
+            if (_ownership is not null) await _ownership.RegisterAsync(request, capabilities.InstanceId, cancellationToken).ConfigureAwait(false);
+        }
         var response = await SendAsync(
             HttpMethod.Post,
             "api/download",
@@ -327,7 +364,7 @@ public sealed class AniWorldClient
             if (response.TryGetProperty("accepted_episode_count", out var count)
                 && count.ValueKind == JsonValueKind.Number
                 && count.TryGetInt32(out var numericCount)
-                && numericCount is >= 0 and <= 500)
+                && numericCount is >= 0 and <= AniWorldRequestApplicationService.MaxEpisodesPerRequest)
             {
                 acceptedEpisodeCount = numericCount;
             }
@@ -394,6 +431,7 @@ public sealed class AniWorldClient
             series_url = request.SeriesUrl,
             custom_path_id = customPathId,
             request_key = request.SubmissionKey,
+            connector_protocol = request.Episodes.Any(item => item.MediaType is "movie" or "series") ? 1 : (int?)null,
         };
 
     private static AniWorldException InvalidCustomPaths()

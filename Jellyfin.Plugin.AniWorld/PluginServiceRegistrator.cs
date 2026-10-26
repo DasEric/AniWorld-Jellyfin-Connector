@@ -14,7 +14,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
             .AddHttpClient<AniWorldClient>(client =>
             {
                 client.Timeout = TimeSpan.FromSeconds(90);
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("Jellyfin-AniWorld-Requests/1.3.2");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("Jellyfin-AniWorld-Requests/1.5.0");
             })
             .RedactLoggedHeaders(["X-Api-Key"])
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
@@ -28,6 +28,9 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
                 MaxConnectionsPerServer = 32,
             });
         serviceCollection.AddSingleton<RequestStore>();
+        serviceCollection.AddSingleton<MediaTargetRouting>();
+        serviceCollection.AddSingleton<DownloadOwnershipStore>();
+        serviceCollection.AddSingleton<DownloadManagementService>();
         serviceCollection.AddSingleton<MediaAccessGrantStore>();
         serviceCollection.AddSingleton<JellixSelectionTokenStore>();
         serviceCollection.AddSingleton<UserRateLimiter>();

@@ -41,6 +41,7 @@ public sealed class CreateMediaRequest
 /// <summary>Payload für eine server-berechnete Anfrage mit nur fehlenden Inhalten.</summary>
 public sealed class AutomaticMediaRequest
 {
+    public bool AllowPartial { get; set; }
     [MaxLength(128)]
     public string PlanToken { get; set; } = string.Empty;
 

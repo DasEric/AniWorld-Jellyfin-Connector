@@ -20,7 +20,7 @@ namespace Jellyfin.Plugin.AniWorld.Api;
 [Produces(MediaTypeNames.Application.Json)]
 public sealed class AniWorldRequestsController : ControllerBase
 {
-    private const int MaxEpisodesPerRequest = 500;
+    private const int MaxEpisodesPerRequest = AniWorldRequestApplicationService.MaxEpisodesPerRequest;
     private const int MaxKnownSources = 32;
     private static readonly TimeSpan RateWindow = TimeSpan.FromMinutes(1);
     private readonly AniWorldClient _aniWorld;
@@ -550,6 +550,8 @@ public sealed class AniWorldRequestsController : ControllerBase
         {
             return $"Eine Anfrage muss zwischen 1 und {MaxEpisodesPerRequest} Episoden enthalten.";
         }
+        if (request.Source == "mangafire" && request.Episodes.Count > 500)
+            return "Eine Manga-Anfrage darf höchstens 500 Einträge enthalten.";
 
         if (!SafeHttpUrl(request.SeriesUrl)
             || request.Episodes.Any(item => item is null
@@ -560,7 +562,7 @@ public sealed class AniWorldRequestsController : ControllerBase
         }
 
         if (request.Episodes.Any(item => item.SelectedPages is not null
-                && (item.SelectedPages.Count is < 1 or > MaxEpisodesPerRequest
+                && (item.SelectedPages.Count is < 1 or > 500
                     || item.SelectedPages.Any(page => page <= 0)
                     || item.SelectedPages.Distinct().Count() != item.SelectedPages.Count))
             || request.Episodes

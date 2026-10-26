@@ -1,12 +1,12 @@
 {
   "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "name": "AniWorld Requests",
-  "description": "Jellyfin-Medienanfragen mit gemeinsamer Film-/Serien-/Manga-Suche und optionalen Buch-/Audiokatalogen.",
-  "overview": "Filme, Serien und Manga sowie optional E-Books, Hörbücher und Podcasts über die aktivierten Quellen suchen und anfragen.",
+  "description": "Language-aware requests, movie/series destinations and owner-checked download deletion for H0melab Downloader.",
+  "overview": "Search enabled sources, request the right language, route films and series to separate libraries, and manage your own downloads.",
   "owner": "Eric",
   "category": "General",
-  "version": "1.3.2.0",
+  "version": "1.5.0.0",
   "targetAbi": "12.0.0.0",
   "framework": "net10.0",
-  "changelog": "Behebt die ungültigen Empfehlungsantworten unter Jellyfins Standard-JSON-Profil: source, label, items und error besitzen jetzt explizite JSON-Namen. Echte HTTP-/MVC-Vertragstests mit Jellyfins JSON-Formatierer prüfen Empfehlungen, Suche und Teilausfälle. Downloader-Fehler enthalten HTTP-Status und API-Endpunkt ohne sensible Daten. Quellenmetadaten-404 aktiviert wieder den vorgesehenen Kompatibilitätsweg. Downloader und Moflix-Integration bleiben unverändert."
+  "changelog": "Grouped episode-page series with stable provider references; central movie/show destinations shared with the downloader; standardized season/episode paths; resumable large series requests. Preserves language checks and owner-checked deletion. Requires H0melab Downloader 2.3.0 or newer."
 }

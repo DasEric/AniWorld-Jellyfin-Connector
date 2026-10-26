@@ -108,7 +108,8 @@ internal static class AniWorldEpisodeParser
                 episodeNumber,
                 languages,
                 chapterUrl,
-                pageNumber));
+                pageNumber,
+                ReadText(episode, "title_de") is { Length: > 0 } germanTitle ? germanTitle : ReadText(episode, "title_en")));
         }
 
         return parsed;
@@ -151,6 +152,9 @@ internal static class AniWorldEpisodeParser
         => new(
             HttpStatusCode.BadGateway,
             "AniWorld hat eine unvollständige oder ungültige Episodenliste geliefert. Es wurde nichts eingereiht.");
+
+    private static string ReadText(JsonElement item, string name)
+        => item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty;
 }
 
 internal sealed record AniWorldEpisode(
@@ -159,4 +163,5 @@ internal sealed record AniWorldEpisode(
     int? EpisodeNumber,
     IReadOnlySet<string> Languages,
     string? ChapterUrl,
-    int? PageNumber);
+    int? PageNumber,
+    string Title = "");

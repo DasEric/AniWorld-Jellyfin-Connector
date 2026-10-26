@@ -1,5 +1,35 @@
 # Änderungen
 
+## 1.5.0
+
+- Übernimmt stabile Serientreffer aus einzelnen Episodenseiten des Downloaders, ohne künstliche Anbieter-URLs einzuführen. FilmPalast/Filmo können Filme und Serien liefern.
+- Nutzt zentrale Film-/Serienziele aus Downloader 2.3.0; geprüfte Mount-/Bibliothekszuordnungen können die Ziele dort einrichten. Geänderte zentrale Ziele werden nicht von einer alten lokalen Zuordnung überschrieben.
+- Bewahrt Sprachprüfung, Freigabe und Eigentumsnachweise. Größere Serien laufen als ein Auftrag mit fortsetzbaren 500er-Arbeitsabschnitten bis 20.000 Einträge statt einer stillen Kürzung.
+- Explizite Capability-Prüfung und aktualisierte englische Benutzer-README. Zuerst Downloader 2.3.0, dann Connector 1.5.0 installieren. Vorhandene Medien werden nicht verschoben.
+
+## 1.4.0
+
+- Sprachen und Provider werden pro Folge geprüft; die Oberfläche zeigt vollständige und teilweise Sprachabdeckung. Teilanfragen benötigen eine ausdrückliche Bestätigung. Es gibt keinen stillen Wechsel der Audiosprache.
+- Jellyfin-Verfügbarkeit berücksichtigt tatsächliche Audio-/Untertitelstreams einschließlich mehrerer lokaler Versionen. Unterschiedliche Sprachen gelten nicht mehr als dieselbe offene Anfrage.
+- Optionale Film-/Serienzuordnung über vorhandene Downloader-Mounts und echte Jellyfin-Bibliothekspfade. Die Einrichtung prüft mit einer kurzlebigen Testdatei, dass beide Pfade dieselbe Ablage sehen. Gemischte Titel behalten pro Inhalt den richtigen Typ und das richtige Ziel.
+- Neue, von der Anfragehistorie unabhängige Eigentumsdatei `download-ownership.json`; der Downloader speichert dauerhafte Nachweise neu erstellter Dateien. Übersprungene Bestandsdateien erhalten keine neue Benutzerzuordnung.
+- Eigene Downloads und alle eigenen Dateien einer Serie lassen sich nach einer serverseitigen Vorschau löschen. Fremde/manuelle Dateien bleiben erhalten. Administratoren verwalten zusätzlich den gesamten Jellyfin-Film-/Serienbestand.
+- Exakte, versionsgeprüfte Dateilöschung mit einmaligen benutzergebundenen Bestätigungen, Teilresultaten und anschließender Bibliotheksaktualisierung. Die normale Jellyfin-Löschberechtigung wird nicht pauschal erweitert.
+- Neue/leere Jellyfin-Bibliotheken werden vor dem zielbezogenen Scan initialisiert. Gemischte Anfragen warten auf beide erforderlichen Scans.
+- Englische README mit Installation, Mountzuordnung, Sprachverfügbarkeit und den Regeln für eigene Downloads.
+
+### Aktualisierung
+
+Zuerst den passenden **H0melab Downloader 2.2.0**, dann **Connector 1.4.0** installieren und Jellyfin neu starten. Neue Videoanfragen verwenden Connector-Protokoll 1 mit Dateinachweisen und Optionen pro Downloadteil. Jellix-Protokoll 1 bleibt unverändert. Ohne neue Zielzuordnung gelten weiterhin die bisherigen Quellenstandards; bestehende Dateien werden nicht verschoben.
+
+Konfiguration, `requests.json`, `download-ownership.json` und die Downloader-Datenbank gemeinsam sichern. Alte Downloads werden nicht anhand von Titeln nachträglich Benutzern zugewiesen. Ein Rückweg zur vorherigen Software löscht keine Medien und stellt bereits gelöschte Dateien nicht wieder her; Dateizuordnungen für ein späteres erneutes Update aufbewahren.
+
+Vor einem Downgrade alle neuen Connector-Downloads fertigstellen oder abbrechen. Ältere Downloader verstehen die Optionen innerhalb dieser Queue-Einträge nicht. Die zusätzlichen Dateinachweis-Tabellen bleiben für ein späteres Update erhalten.
+
+### Verifikation
+
+Zusätzliche C#-/Python-Regressionsprüfungen sowie ein opt-in End-to-End-Test gegen einen aus dem passenden Jellyfin-12-Quellcode gebauten Server. Dieser verwendet echte Anmeldung, Plugin-Dienste, Bibliotheken, Scans, FFprobe und Dateioperationen. Externe Quellseiten werden durch synthetische Provider ersetzt; ihre Live-Erreichbarkeit ist dadurch nicht bestätigt.
+
 ## 1.3.2
 
 - Regressionstests für Jellix 0.5.0 bestätigen die vorhandene Protokoll-v1-Anbindung: Benutzerbindung, einmalige Auswahl, aktuelle Admin-Freigabe-/Direktdownload-Einstellung, Wartungsmodus, Quellenfreigaben und Downloadvorgaben bleiben zentral im Connector. Keine zweite Freigabepolicy in Jellix und keine Änderung am Downloader.

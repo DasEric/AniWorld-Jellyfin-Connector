@@ -15,6 +15,14 @@
       <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="mfMaintenanceMessage">Hinweis bei Sperre</label><input is="emby-input" id="mfMaintenanceMessage" type="text" maxlength="500"></div>
       <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="mfMaxPending">Maximale offene Anfragen pro Benutzer</label><input is="emby-input" id="mfMaxPending" type="number" min="1" max="100"></div>
       <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="mfAllowedSources">Erlaubte Quellen (optional)</label><input is="emby-input" id="mfAllowedSources" type="text" placeholder="aniworld,sto,filmpalast,megakino"><div class="fieldDescription">Kommagetrennte AniWorld-Quellen-IDs. Leer bedeutet: alle aktivierten, nicht anderweitig gesperrten Quellen.</div></div>
+      <h3>Film- und Serienziele</h3>
+      <p>Ordne die vorhandenen Downloader-Mounts den passenden Jellyfin-Bibliothekspfaden zu. Unterschiedliche Containerpfade sind erlaubt; beim Speichern wird geprüft, dass beide dieselben Dateien sehen. Verbindung und API-Key zuerst speichern.</p>
+      <div class="checkboxContainer"><label><input is="emby-checkbox" id="mfMediaRouting" type="checkbox"><span>Film-/Serienziele mit Jellyfin prüfen und im Downloader speichern</span></label></div>
+      <div class="inputContainer"><label for="mfMoviePath">Filme: Downloader-Mount</label><select is="emby-select" id="mfMoviePath"></select></div>
+      <div class="inputContainer"><label for="mfMovieLibrary">Filme: Jellyfin-Bibliothek / Pfad</label><select is="emby-select" id="mfMovieLibrary"></select></div>
+      <div class="inputContainer"><label for="mfSeriesPath">Serien: Downloader-Mount</label><select is="emby-select" id="mfSeriesPath"></select></div>
+      <div class="inputContainer"><label for="mfSeriesLibrary">Serien: Jellyfin-Bibliothek / Pfad</label><select is="emby-select" id="mfSeriesLibrary"></select></div>
+      <button is="emby-button" id="mfLoadTargets" type="button" class="raised block"><span>Mounts und Bibliotheken neu laden</span></button><p id="mfTargetStatus"></p>
       <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="mfDefaultLanguage">Standard-Sprache</label><input is="emby-input" id="mfDefaultLanguage" type="text" placeholder="German Dub"></div>
       <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="mfDefaultProvider">Standard-Provider</label><input is="emby-input" id="mfDefaultProvider" type="text" placeholder="VOE"></div>
       <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="mfMaxSources">Gleichzeitige Quellenabfragen</label><input is="emby-input" id="mfMaxSources" type="number" min="1" max="32"><div class="fieldDescription">Begrenzt parallele Abfragen. Alle passenden freigegebenen Quellen werden berücksichtigt, weitere folgen nacheinander.</div></div>

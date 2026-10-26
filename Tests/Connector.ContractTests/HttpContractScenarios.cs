@@ -19,7 +19,8 @@ internal static class HttpContractScenarios
 
     internal static async Task RunAsync(bool serveBrowser)
     {
-        using var fixture = new CatalogScenarios.Fixture { MissingBrowseTypes = true };
+        using var fixture = new CatalogScenarios.Fixture { MissingBrowseTypes = true, VideoPlanning = serveBrowser, PartialVideoLanguages = serveBrowser };
+        using var fileFixture = new MediaLifecycleScenarios.Fixture();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
@@ -28,8 +29,10 @@ internal static class HttpContractScenarios
         builder.Services.AddSingleton(fixture.Secrets);
         builder.Services.AddSingleton(fixture.Application);
         builder.Services.AddSingleton<UserRateLimiter>();
+        builder.Services.AddSingleton(fileFixture.Routing);
+        builder.Services.AddSingleton(new DownloadManagementService(fileFixture.Ownership, fixture.Client, fileFixture.Library));
         builder.Services.AddAuthentication();
-        builder.Services.AddAuthorization();
+        builder.Services.AddAuthorization(options => options.AddPolicy(MediaBrowser.Common.Api.Policies.RequiresElevation, policy => policy.RequireRole("Administrator")));
         builder.Services.AddControllers().AddApplicationPart(typeof(AniWorldRequestsController).Assembly);
         builder.Services.Configure<MvcOptions>(options =>
         {
@@ -42,7 +45,7 @@ internal static class HttpContractScenarios
         app.Use(async (context, next) =>
         {
             context.User = new ClaimsPrincipal(new ClaimsIdentity(
-                [new Claim(ClaimTypes.NameIdentifier, "http-contract"), new Claim(ClaimTypes.Name, "Contract")], "ContractTest"));
+                [new Claim(ClaimTypes.NameIdentifier, "http-contract"), new Claim(ClaimTypes.Name, "Contract"), new Claim(ClaimTypes.Role, "Administrator")], "ContractTest"));
             await next();
         });
         app.UseAuthorization();

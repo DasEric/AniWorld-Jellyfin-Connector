@@ -8,7 +8,7 @@ namespace Jellyfin.Plugin.AniWorld.Services;
 /// </summary>
 public sealed class MediaAccessGrantStore
 {
-    private const int MaxEntriesPerUser = 6000;
+    private const int MaxEntriesPerUser = 100_000;
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(30);
     private readonly object _sync = new();
     private readonly Dictionary<string, Dictionary<string, Grant>> _users = new(StringComparer.Ordinal);

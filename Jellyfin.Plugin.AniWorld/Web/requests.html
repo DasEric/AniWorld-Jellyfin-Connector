@@ -38,9 +38,15 @@
       <div class="mf-discover" data-mf="discover"><div class="mf-empty">Verfügbare Quellen werden geladen…</div></div>
       <div class="mf-results" data-mf="results" hidden></div>
     </section>
-    <section class="mf-panel" data-panel="mine"><div class="mf-actions"><button class="mf-btn secondary" data-mf="refresh-mine" type="button">Aktualisieren</button></div><div class="mf-list" data-mf="mine"></div></section>
-    <section class="mf-panel" data-panel="admin"><div class="mf-actions"><button class="mf-btn secondary" data-mf="refresh-admin" type="button">Aktualisieren</button></div><div class="mf-list" data-mf="admin"></div></section>
+    <section class="mf-panel" data-panel="mine"><div class="mf-actions"><button class="mf-btn secondary" data-mf="refresh-mine" type="button">Aktualisieren</button></div><h3>Meine Anfragen</h3><div class="mf-list" data-mf="mine"></div><h3>Meine Downloads</h3><p class="mf-muted">Du kannst nur nachweislich selbst heruntergeladene Dateien löschen. Fremde Folgen bleiben erhalten.</p><div class="mf-list" data-mf="downloads"></div></section>
+    <section class="mf-panel" data-panel="admin"><div class="mf-actions"><button class="mf-btn secondary" data-mf="refresh-admin" type="button">Aktualisieren</button></div><h3>Anfragen verwalten</h3><div class="mf-list" data-mf="admin"></div><h3>Alle Connector-Downloads</h3><div class="mf-list" data-mf="admin-downloads"></div><h3>Gesamte Film-/Serienbibliothek</h3><form data-mf="library-search"><input class="mf-input" data-mf="library-query" maxlength="120" placeholder="Film oder Serie suchen"><button class="mf-btn secondary" type="submit">Bibliothek durchsuchen</button></form><div class="mf-list" data-mf="admin-library"></div></section>
 
+    <div class="mf-overlay" data-mf="delete-overlay" role="dialog" aria-modal="true" aria-labelledby="mf-delete-title">
+      <div class="mf-dialog"><div class="mf-dialoghead"><strong id="mf-delete-title" data-mf="delete-title">Downloads löschen</strong><button class="mf-close" data-mf="delete-close" type="button" aria-label="Löschvorschau schließen">×</button></div>
+        <div class="mf-dialogbody"><p data-mf="delete-message"></p><p data-mf="delete-count"></p><ul data-mf="delete-files" style="max-height:45vh;overflow:auto;overflow-wrap:anywhere"></ul><div data-mf="delete-progress" aria-live="polite"></div>
+          <div class="mf-dialogactions"><button class="mf-btn secondary" data-mf="delete-cancel" type="button">Abbrechen</button><button class="mf-btn danger" data-mf="delete-confirm" type="button">Aufgelistete Dateien endgültig löschen</button></div>
+        </div></div>
+    </div>
     <div class="mf-overlay" data-mf="overlay" role="dialog" aria-modal="true">
       <div class="mf-dialog">
         <div class="mf-dialoghead"><strong data-mf="detail-title">Titel</strong><button class="mf-close" data-mf="close" type="button" aria-label="Schließen">×</button></div>
@@ -51,6 +57,7 @@
             <div class="mf-field"><label>Sprache</label><select class="mf-select" data-mf="language"></select></div>
             <div class="mf-field"><label>Provider/Hoster</label><select class="mf-select" data-mf="provider"></select></div>
           </div>
+          <label data-mf="partial-container" hidden><input type="checkbox" data-mf="partial"> Nur die in dieser Sprache bestätigten fehlenden Inhalte anfragen; der Rest bleibt offen.</label>
           <div class="mf-field" data-mf="catalog-options" hidden><label for="mf-format">Datei / Format</label><select id="mf-format" class="mf-select" data-mf="format"></select><div class="mf-meta" data-mf="catalog-target"></div></div>
           <div data-mf="dialog-notice" aria-live="polite"></div>
           <div class="mf-dialogactions"><button class="mf-btn secondary" data-mf="cancel" type="button">Abbrechen</button><button class="mf-btn" data-mf="request" type="button">Anfragen</button></div>

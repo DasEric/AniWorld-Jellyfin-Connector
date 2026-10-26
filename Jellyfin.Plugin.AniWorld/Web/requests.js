@@ -213,7 +213,7 @@ export default function (view, params) {
     }
     const body = document.createElement('div'); body.className = 'mf-cardbody';
     const title = document.createElement('div'); title.className = 'mf-cardtitle'; title.textContent = item.title || item.name || 'Unbekannter Titel';
-    const source = document.createElement('div'); source.className = 'mf-source'; source.textContent = [sourceLabel || sourceId, item.author, item.year].filter(Boolean).join(' · ');
+    const source = document.createElement('div'); source.className = 'mf-source'; source.textContent = [sourceLabel || sourceId, item.grouped_series ? 'Serie · Staffeln/Folgen im Detail' : '', item.author, item.year].filter(Boolean).join(' · ');
     body.append(title, source); card.appendChild(body);
     const open = () => openDetail(item, sourceId); card.addEventListener('click', open); card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
     return card;
@@ -252,8 +252,8 @@ export default function (view, params) {
     const generation = ++detailGeneration;
     q('catalog-options').hidden = true; view.querySelector('.mf-options').hidden = false;
     state.source = source; state.detail = null; q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">Bestand in Jellyfin wird geprüft…</div>'; dialogNotice(''); q('request').textContent = 'Anfragen'; q('request').disabled = true;
-    setOptions(q('language'), [state.status.defaultLanguage || 'German Dub'], state.status.defaultLanguage);
-    setOptions(q('provider'), [state.status.defaultProvider || 'VOE'], state.status.defaultProvider);
+    setOptions(q('language'), [], ''); setOptions(q('provider'), [], '');
+    q('partial-container').hidden = true; q('partial').checked = false;
     try {
       const sourceObj = state.sources.find((s) => s.id === source);
       const knownTypes = sourceObj && sourceObj.media_types || [];
@@ -270,34 +270,28 @@ export default function (view, params) {
       const advertisedProviderLanguages = plan.providers && typeof plan.providers === 'object'
         ? Object.keys(plan.providers).filter((language) => Array.isArray(plan.providers[language]) && plan.providers[language].length)
         : [];
-      const plannedLanguages = Array.isArray(plan.languages) ? plan.languages : [];
-      const providerLanguages = plannedLanguages.length
-        ? advertisedProviderLanguages.filter((language) => plannedLanguages.some((candidate) => String(candidate).toLowerCase() === language.toLowerCase()))
-        : advertisedProviderLanguages;
+      const providerLanguages = Object.keys(plan.coverage || {}).length ? Object.keys(plan.coverage) : advertisedProviderLanguages;
       const languages = providerLanguages.slice();
       setOptions(q('language'), languages, state.status.defaultLanguage);
       const syncProviders = () => {
         const available = plan.providers && Array.isArray(plan.providers[q('language').value]) ? plan.providers[q('language').value] : [];
         setOptions(q('provider'), available, state.status.defaultProvider);
-        q('request').disabled = !plan.missing_count || available.length === 0;
+        const coverage = plan.coverage && plan.coverage[q('language').value];
+        const missing = coverage ? coverage.missing_count : plan.missing_count;
+        const unavailable = coverage ? coverage.unavailable_count : 0;
+        q('partial-container').hidden = unavailable === 0;
+        q('request').disabled = !missing || available.length === 0 || (unavailable > 0 && !q('partial').checked);
+        q('plan').replaceChildren();
+        const summary = document.createElement('div'); summary.className = 'mf-plan';
+        summary.textContent = coverage ? q('language').value + ': ' + coverage.available_count + '/' + plan.total_count + ' Inhalte an der Quelle bestätigt; '
+          + coverage.existing_count + ' in dieser Variante vorhanden; ' + missing + ' anfragbar; ' + unavailable + ' nicht bestätigt.'
+          : (plan.missing_count ? plan.missing_count + ' fehlende Inhalte.' : 'Bereits vorhanden.');
+        if (!providerLanguages.length) summary.textContent = 'Keine Sprache mit verfügbaren Providern bestätigt. Bitte später erneut prüfen.';
+        if (missing > 500) summary.textContent += ' Ein Serienauftrag mit ' + Math.ceil(missing / 500) + ' fortsetzbaren Arbeitsabschnitten.';
+        q('plan').appendChild(summary);
       };
-      q('language').onchange = syncProviders; syncProviders();
-      q('plan').innerHTML = '';
-      const summary = document.createElement('div'); summary.className = 'mf-plan ' + (plan.missing_count ? '' : 'complete');
-      if (plan.missing_count) {
-        const missingText = plan.is_movie
-          ? 'Der Film fehlt und kann angefragt werden.'
-          : plan.missing_count + ' von ' + plan.total_count + ' Episoden fehlen. Es werden ausschließlich diese fehlenden Episoden angefragt.';
-        summary.textContent = providerLanguages.length
-          ? missingText
-          : missingText + ' AniWorld meldet dafür derzeit keinen verfügbaren Download-Provider.';
-        q('request').disabled = providerLanguages.length === 0;
-      } else {
-        summary.textContent = plan.is_movie
-          ? 'Der Film ist bereits vorhanden und wird nicht erneut eingereiht.'
-          : 'Alle ' + plan.total_count + ' Episoden sind bereits vorhanden. Es wird nichts eingereiht.';
-      }
-      q('plan').appendChild(summary);
+      q('language').onchange = () => { q('partial').checked = false; syncProviders(); };
+      q('partial').onchange = syncProviders; syncProviders();
     } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { q('description').textContent = error.message; q('plan').innerHTML = ''; dialogNotice(error.message, true); } }
   }
   function setOptions(select, values, preferred) { const clean = Array.from(new Set(values.filter(Boolean))); select.innerHTML = ''; clean.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = value; select.appendChild(option); }); if (clean.includes(preferred)) select.value = preferred; }
@@ -314,7 +308,7 @@ export default function (view, params) {
     q('request').disabled = true;
     try {
       // upscale entfernt
-      const payload = { planToken: detail.plan.plan_token || '', title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.mediaType, language: q('language').value, provider: q('provider').value };
+      const payload = { planToken: detail.plan.plan_token || '', title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.mediaType, language: q('language').value, provider: q('provider').value, allowPartial: q('partial').checked };
       const result = await call('Requests/Automatic', { method: 'POST', body: payload });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
       const message = result.status === 'queued' ? 'Nur die fehlenden Inhalte wurden direkt an AniWorld übergeben.' : 'Die Anfrage für die fehlenden Inhalte wurde an den Administrator gesendet.';
@@ -326,6 +320,7 @@ export default function (view, params) {
     state.detail = null;
     q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || 'Laden…'; q('description').textContent = 'Katalogdetails werden geladen…';
     q('plan').replaceChildren(); dialogNotice(''); q('request').disabled = true; q('request').textContent = 'Anfragen';
+    q('partial-container').hidden = true;
     view.querySelector('.mf-options').hidden = true; q('catalog-options').hidden = false; q('format').replaceChildren(); q('catalog-target').textContent = '';
     try {
       const detail = await call('Catalog/Details', { query: { source, id: item.id, mediaType: item.media_kind } });
@@ -401,6 +396,7 @@ export default function (view, params) {
       const hasActiveDownload = items.some((item) => item.status === 'queued')
         || progress.some((item) => item.status === 'queued' || item.status === 'running');
       scheduleMineRefresh(hasActiveDownload);
+      if (initial || !hasActiveDownload) loadDownloads(false);
     } catch (error) {
       if (disposed || !view.isConnected) return;
       if (!mineRendered) q('mine').textContent = error.message;
@@ -414,10 +410,90 @@ export default function (view, params) {
     try {
       const items = await call('Admin/Requests');
       if (!disposed && view.isConnected) renderRequests(q('admin'), items, true);
+      await Promise.all([loadDownloads(true), loadLibrary()]);
     } catch (error) {
       if (!disposed && view.isConnected) q('admin').textContent = error.message;
     }
   }
+  async function loadDownloads(admin) {
+    const host = q(admin ? 'admin-downloads' : 'downloads');
+    try {
+      const groups = await call(admin ? 'Admin/Downloads' : 'Downloads/Mine');
+      if (disposed || !view.isConnected) return;
+      host.replaceChildren();
+      if (!groups.length) host.textContent = 'Noch keine nachweislich zugeordneten Downloads vorhanden.';
+      groups.forEach((group) => {
+        const card = document.createElement('div'); card.className = 'mf-request';
+        const title = document.createElement('strong'); title.textContent = group.title; card.appendChild(title);
+        const meta = document.createElement('div'); meta.className = 'mf-meta';
+        meta.textContent = group.files.length + ' Dateien · Angefragt: ' + Array.from(new Set(group.files.map((file) => file.language))).join(', ');
+        card.appendChild(meta);
+        group.files.forEach((file) => {
+          const row = document.createElement('div'); row.className = 'mf-meta';
+          const audio = (file.streams || []).filter((stream) => stream.codec_type === 'audio').map((stream) => stream.tags && stream.tags.language).filter(Boolean);
+          row.textContent = file.name + ' · ' + file.state + ' · Tonspuren: ' + (audio.join(', ') || 'unbekannt')
+            + ' · ' + ({ verified: 'Sprache bestätigt', mismatch: 'Tonspur weicht von der Anfrage ab', unknown: 'Sprachprüfung unbestätigt' }[file.verification] || 'Sprachprüfung unbestätigt');
+          if (file.verification === 'mismatch') row.classList.add('mf-error'); card.appendChild(row);
+        });
+        if (group.canDelete) {
+          const button = document.createElement('button'); button.className = 'mf-btn danger'; button.textContent = admin ? 'Zugeordnete Downloads löschen' : 'Eigene Downloads / Serie löschen';
+          button.onclick = () => deleteDownload((admin ? 'Admin/' : '') + 'Downloads', group.id, admin); card.appendChild(button);
+        }
+        host.appendChild(card);
+      });
+    } catch (error) { if (!disposed && view.isConnected) host.textContent = error.message; }
+  }
+  async function deleteDownload(base, id, admin) {
+    try {
+      const preview = await call(base + '/' + encodeURIComponent(id) + '/Preview', { method: 'POST' });
+      if (disposed || !view.isConnected) return;
+      state.deletion = { base, admin, token: preview.token, running: false };
+      q('delete-title').textContent = preview.title;
+      q('delete-message').textContent = preview.message;
+      q('delete-count').textContent = preview.count + ' Dateien werden endgültig entfernt:';
+      q('delete-files').replaceChildren();
+      preview.files.forEach((file) => { const row = document.createElement('li'); row.textContent = file.name; q('delete-files').appendChild(row); });
+      q('delete-progress').textContent = '';
+      q('delete-confirm').disabled = false;
+      q('delete-overlay').style.display = 'flex'; q('delete-cancel').focus();
+    } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); }
+  }
+  function closeDeletePreview() {
+    if (state.deletion && state.deletion.running) return;
+    state.deletion = null; q('delete-overlay').style.display = 'none';
+  }
+  q('delete-cancel').addEventListener('click', closeDeletePreview); q('delete-close').addEventListener('click', closeDeletePreview);
+  q('delete-confirm').addEventListener('click', async () => {
+    const selection = state.deletion;
+    if (!selection || selection.running) return;
+    selection.running = true; q('delete-confirm').disabled = true;
+    q('delete-progress').textContent = 'Dateien werden geprüft und gelöscht…';
+    try {
+      const result = await call(selection.base + '/Delete', { method: 'POST', body: { token: selection.token } });
+      if (disposed || !view.isConnected) return;
+      const conflicts = (result.items || []).filter((item) => item.status !== 'deleted').length;
+      notice(conflicts ? conflicts + ' Dateien wurden wegen Änderungen oder Dateifehlern nicht gelöscht. Bitte neu prüfen.' : 'Dateien gelöscht. Jellyfin aktualisiert den Bibliotheksbestand.', conflicts > 0);
+      await loadDownloads(selection.admin);
+      if (selection.base === 'Admin/Library') await loadLibrary();
+    } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); }
+    finally { selection.running = false; if (!disposed && view.isConnected) closeDeletePreview(); }
+  });
+  async function loadLibrary() {
+    const host = q('admin-library');
+    try {
+      const items = await call('Admin/Library', { query: { query: q('library-query').value.trim() } });
+      if (disposed || !view.isConnected) return;
+      host.replaceChildren();
+      if (!items.length) host.textContent = 'Keine passenden Bibliotheksinhalte.';
+      items.forEach((item) => {
+        const card = document.createElement('div'); card.className = 'mf-request';
+        const title = document.createElement('strong'); title.textContent = item.title + ' · ' + categoryLabel(item.mediaType);
+        const button = document.createElement('button'); button.className = 'mf-btn danger'; button.textContent = 'Als Admin vollständig löschen';
+        button.onclick = () => deleteDownload('Admin/Library', item.id, true); card.append(title, document.createElement('br'), button); host.appendChild(card);
+      });
+    } catch (error) { if (!disposed && view.isConnected) host.textContent = error.message; }
+  }
+  q('library-search').addEventListener('submit', (event) => { event.preventDefault(); loadLibrary(); });
   function renderRequests(host, items, admin, progressByQueue) {
     const values = Array.isArray(items) ? items : [];
     if (!values.length) {
@@ -497,7 +573,7 @@ export default function (view, params) {
   }
   function progressDetail(progress) { const phase = ({ download: 'Download', ffmpeg: 'Verarbeitung' })[progress.phase] || 'Download'; const episodes = progress.total_episodes > 1 ? ' · ' + progress.current_episode + '/' + progress.total_episodes + ' Episoden' : ''; return phase + ': ' + Math.round(Number(progress.percent) || 0) + '%' + episodes; }
   function statusLabel(status) { return ({ pending: 'Ausstehend', processing: 'Wird übergeben', queued: 'Wartet auf Download', completed: 'Fertig', available: 'Bereits in Jellyfin vorhanden', partial: 'Teilweise fertig', cancelled: 'Abgebrochen', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen', failed: 'Fehlgeschlagen' })[status] || status; }
-  q('refresh-mine').addEventListener('click', () => loadMine({ initial: !mineRendered })); q('refresh-admin').addEventListener('click', loadAdmin);
+  q('refresh-mine').addEventListener('click', () => { loadMine({ initial: !mineRendered }); loadDownloads(false); }); q('refresh-admin').addEventListener('click', loadAdmin);
   setVisibilityListener(true);
   view.addEventListener('viewshow', () => { if (disposed) return; mineVisible = true; setVisibilityListener(true); if (state.tab === 'mine') loadMine({ initial: !mineRendered }); });
   view.addEventListener('viewhide', () => { mineVisible = false; stopMinePolling(); setVisibilityListener(false); detailGeneration++; });

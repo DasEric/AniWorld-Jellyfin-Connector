@@ -4,9 +4,9 @@ using System.Text.Json.Serialization;
 namespace Jellyfin.Plugin.AniWorld.Models;
 
 /// <summary>
-/// One entry accepted by AniWorld's download queue. Normal video episodes are
-/// serialized as URL strings; sources such as MangaFire use the extended
-/// object form supported by the downloader.
+/// One entry accepted by the download queue. Legacy URL strings remain readable;
+/// modern video entries carry verified variants and targets, while MangaFire
+/// entries retain their chapter/page options.
 /// </summary>
 [JsonConverter(typeof(AniWorldDownloadItemJsonConverter))]
 public sealed class AniWorldDownloadItem
@@ -27,6 +27,12 @@ public sealed class AniWorldDownloadItem
     public IReadOnlyList<int>? SelectedPages { get; set; }
 
     public string? MangaFireFormat { get; set; }
+
+    public string? Language { get; set; }
+    public string? Provider { get; set; }
+    public string? MediaType { get; set; }
+    public int? CustomPathId { get; set; }
+    public string? TargetRoot { get; set; }
 }
 
 public sealed class AniWorldDownloadItemJsonConverter : JsonConverter<AniWorldDownloadItem>
@@ -50,6 +56,11 @@ public sealed class AniWorldDownloadItemJsonConverter : JsonConverter<AniWorldDo
             Url = ReadString(root, "url"),
             SeriesUrl = ReadOptionalString(root, "series_url"),
             MangaFireFormat = ReadOptionalString(root, "mangafire_format"),
+            Language = ReadOptionalString(root, "language"),
+            Provider = ReadOptionalString(root, "provider"),
+            MediaType = ReadOptionalString(root, "media_type"),
+            TargetRoot = ReadOptionalString(root, "target_root"),
+            CustomPathId = root.TryGetProperty("custom_path_id", out var pathId) && pathId.TryGetInt32(out var id) ? id : null,
         };
 
         if (root.TryGetProperty("selected_pages", out var pages))
@@ -73,7 +84,9 @@ public sealed class AniWorldDownloadItemJsonConverter : JsonConverter<AniWorldDo
     {
         if (string.IsNullOrWhiteSpace(value.SeriesUrl)
             && value.SelectedPages is null
-            && string.IsNullOrWhiteSpace(value.MangaFireFormat))
+            && string.IsNullOrWhiteSpace(value.MangaFireFormat)
+            && value.Language is null && value.Provider is null && value.MediaType is null
+            && value.CustomPathId is null && value.TargetRoot is null)
         {
             writer.WriteStringValue(value.Url);
             return;
@@ -81,6 +94,11 @@ public sealed class AniWorldDownloadItemJsonConverter : JsonConverter<AniWorldDo
 
         writer.WriteStartObject();
         writer.WriteString("url", value.Url);
+        if (value.Language is not null) writer.WriteString("language", value.Language);
+        if (value.Provider is not null) writer.WriteString("provider", value.Provider);
+        if (value.MediaType is not null) writer.WriteString("media_type", value.MediaType);
+        if (value.CustomPathId.HasValue) writer.WriteNumber("custom_path_id", value.CustomPathId.Value);
+        if (value.TargetRoot is not null) writer.WriteString("target_root", value.TargetRoot);
         if (!string.IsNullOrWhiteSpace(value.SeriesUrl))
         {
             writer.WriteString("series_url", value.SeriesUrl);

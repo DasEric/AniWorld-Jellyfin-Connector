@@ -1,6 +1,7 @@
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Jellyfin.Plugin.AniWorld.Models;
 
 namespace Jellyfin.Plugin.AniWorld.Services;
 
@@ -82,12 +83,13 @@ public sealed class AniWorldQueueMonitor : BackgroundService
         }
 
         var pending = await _store.ListPendingLibraryScansAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var group in pending.GroupBy(item => item.MediaType?.Trim().ToLowerInvariant() ?? string.Empty))
+        foreach (var group in pending.GroupBy(GetScanKind))
         {
             var taskType = group.Key switch
             {
                 "movie" => typeof(AniWorldMovieLibraryScanTask),
                 "series" => typeof(AniWorldSeriesLibraryScanTask),
+                "mixed" => typeof(AniWorldSeriesLibraryScanTask),
                 _ => null,
             };
             if (taskType is null)
@@ -122,6 +124,14 @@ public sealed class AniWorldQueueMonitor : BackgroundService
             {
                 _logger.LogInformation("Starting the Jellyfin {MediaType} scan after {RequestCount} completed AniWorld requests.", group.Key, group.Count());
                 await _taskManager.Execute(worker, new TaskOptions()).ConfigureAwait(false);
+                if (group.Key == "mixed" && worker.LastExecutionResult?.Status == TaskCompletionStatus.Completed)
+                {
+                    var movies = _taskManager.ScheduledTasks.FirstOrDefault(item => item.ScheduledTask is AniWorldMovieLibraryScanTask);
+                    if (movies is null || movies.State != TaskState.Idle) continue;
+                    await _taskManager.Execute(movies, new TaskOptions()).ConfigureAwait(false);
+                    if (movies.LastExecutionResult?.Status != TaskCompletionStatus.Completed)
+                    { _nextScanAttemptUtc[group.Key] = DateTime.UtcNow.AddMinutes(5); continue; }
+                }
                 if (worker.LastExecutionResult?.Status != TaskCompletionStatus.Completed)
                 {
                     _nextScanAttemptUtc[group.Key] = DateTime.UtcNow.AddMinutes(5);
@@ -144,5 +154,11 @@ public sealed class AniWorldQueueMonitor : BackgroundService
                 _logger.LogWarning(exception, "Could not run the Jellyfin {MediaType} scan task; it will be retried.", group.Key);
             }
         }
+    }
+
+    internal static string GetScanKind(MediaRequest request)
+    {
+        var kinds = request.Episodes.Select(item => item.MediaType).Where(type => type is "movie" or "series").Distinct().ToArray();
+        return kinds.Length > 1 ? "mixed" : kinds.Length == 1 ? kinds[0]! : request.MediaType;
     }
 }

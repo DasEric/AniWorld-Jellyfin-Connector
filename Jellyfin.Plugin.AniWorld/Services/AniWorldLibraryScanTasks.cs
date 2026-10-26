@@ -32,8 +32,14 @@ public abstract class AniWorldLibraryScanTask : IScheduledTask
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        var physicalFolders = _libraryManager.GetVirtualFolders()
+        // Newly added or previously empty libraries may not have cached physical IDs yet.
+        await _libraryManager.ValidateTopLibraryFolders(cancellationToken).ConfigureAwait(false);
+        var selectedLibraries = _libraryManager.GetVirtualFolders()
             .Where(folder => string.Equals(folder.CollectionType.ToString(), CollectionType, StringComparison.OrdinalIgnoreCase))
+            .Where(folder => Plugin.Instance?.Configuration.EnableMediaRouting != true
+                || folder.ItemId == (CollectionType == "movies" ? Plugin.Instance.Configuration.MovieLibraryId : Plugin.Instance.Configuration.SeriesLibraryId))
+            .ToArray();
+        var physicalFolders = selectedLibraries
             .Select(folder => Guid.TryParse(folder.ItemId, out var id) ? _libraryManager.GetItemById(id) : null)
             .OfType<CollectionFolder>()
             .SelectMany(folder => folder.GetPhysicalFolders())
@@ -42,6 +48,9 @@ public abstract class AniWorldLibraryScanTask : IScheduledTask
 
         if (physicalFolders.Length == 0)
         {
+            if (selectedLibraries.Length > 0 && selectedLibraries.SelectMany(folder => folder.Locations)
+                .All(path => Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()))
+            { progress.Report(100); return; }
             throw new InvalidOperationException($"No physical Jellyfin {CollectionType} library folders were found.");
         }
 

@@ -59,7 +59,7 @@ public sealed class RequestStore
                 && item.Backend == request.Backend
                 && (request.Backend == "catalog"
                     ? item.Source == request.Source && item.CatalogItemId == request.CatalogItemId && item.CatalogAssetId == request.CatalogAssetId
-                    : item.SeriesUrl == request.SeriesUrl && item.EpisodesJson == episodesJson)
+                    : item.SeriesUrl == request.SeriesUrl && item.Language == request.Language && item.EpisodesJson == episodesJson)
                 && IsOpen(item));
             if (duplicate is not null)
             {

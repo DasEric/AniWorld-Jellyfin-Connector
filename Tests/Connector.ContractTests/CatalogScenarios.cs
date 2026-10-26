@@ -364,6 +364,7 @@ internal static class CatalogScenarios
         internal List<JsonElement> VideoRequests { get; } = [];
         internal List<string> BrowseQueries { get; } = [];
         internal JsonElement LastPayload;
+        internal bool PartialVideoLanguages;
         private readonly HttpClient _http;
 
         internal Fixture()
@@ -426,7 +427,11 @@ internal static class CatalogScenarios
                         new { url = "https://example.test/series/season-1/episode-1", episode_number = 1, available_languages = new[] { "German Dub" } },
                         new { url = "https://example.test/series/season-1/episode-2", episode_number = 2, available_languages = new[] { "German Dub" } } } }
                     : (object)new { episodes = new[] { new { url = "https://mangafire.to/title/example/chapter/1", chapter_url = "https://mangafire.to/title/example/chapter/1", episode_number = 1, page_number = 1 } } };
-            else if (path.EndsWith("/api/providers", StringComparison.Ordinal)) data = new { providers = new Dictionary<string, string[]> { ["German Dub"] = ["VOE"] } };
+            else if (path.EndsWith("/api/providers", StringComparison.Ordinal)) data = new { providers = PartialVideoLanguages
+                ? request.RequestUri.Query.Contains("episode-2", StringComparison.Ordinal) ? new Dictionary<string, string[]> { ["English Dub"] = ["VOE"] }
+                    : new Dictionary<string, string[]> { ["German Dub"] = ["VOE"], ["English Dub"] = ["VOE"] }
+                : new Dictionary<string, string[]> { ["German Dub"] = ["VOE"] } };
+            else if (path.EndsWith("/api/connector/capabilities", StringComparison.Ordinal)) data = new { protocol = 1, instance_id = "00000000000000000000000000000001", file_receipts = true, entry_options = true, video_groups = 1, max_entries = 20000, paths = new[] { new { id = (int?)null, name = "Default", path = Directory } } };
             else if (path.EndsWith("/api/custom-paths", StringComparison.Ordinal)) data = new { paths = Array.Empty<object>() };
             else if (path.EndsWith("/api/download", StringComparison.Ordinal))
             {

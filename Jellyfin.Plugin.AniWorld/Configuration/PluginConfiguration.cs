@@ -7,6 +7,15 @@ namespace Jellyfin.Plugin.AniWorld.Configuration;
 /// <summary>Konfiguration für das AniWorld Requests Plugin.</summary>
 public class PluginConfiguration : BasePluginConfiguration
 {
+    public bool EnableMediaRouting { get; set; }
+    public int MoviePathId { get; set; }
+    public int SeriesPathId { get; set; }
+    public string MovieLibraryId { get; set; } = string.Empty;
+    public string SeriesLibraryId { get; set; } = string.Empty;
+    public string MovieLibraryPath { get; set; } = string.Empty;
+    public string SeriesLibraryPath { get; set; } = string.Empty;
+    public string MovieDownloadRoot { get; set; } = string.Empty;
+    public string SeriesDownloadRoot { get; set; } = string.Empty;
     /// <summary>Gets or sets the AniWorld base URL.</summary>
     public string AniWorldUrl { get; set; } = "http://127.0.0.1:8080";
 

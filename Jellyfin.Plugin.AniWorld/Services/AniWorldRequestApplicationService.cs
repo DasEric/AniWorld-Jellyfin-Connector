@@ -13,7 +13,7 @@ namespace Jellyfin.Plugin.AniWorld.Services;
 /// </summary>
 public sealed partial class AniWorldRequestApplicationService
 {
-    public const int MaxEpisodesPerRequest = 500;
+    public const int MaxEpisodesPerRequest = 20_000;
     public const int MaxKnownSources = 32;
     private static readonly TimeSpan RateWindow = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan PlanLifetime = TimeSpan.FromMinutes(5);
@@ -520,11 +520,14 @@ public sealed partial class AniWorldRequestApplicationService
         MissingMediaPlan plan;
         if (!string.IsNullOrWhiteSpace(request.PlanToken))
         {
-            plan = ConsumePlan(userId, request);
+            var previous = SelectVariant(ConsumePlan(userId, request), request.Language, request.Provider);
+            plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant, refreshOffers: true).ConfigureAwait(false);
+            var approvedUrls = previous.MissingItems.Select(item => item.Url).ToHashSet(StringComparer.Ordinal);
+            if (plan.MissingItems.Any(item => !approvedUrls.Contains(item.Url))) throw DownloadOptionsChanged();
         }
         else
         {
-            plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant).ConfigureAwait(false);
+            plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant, refreshOffers: true).ConfigureAwait(false);
         }
         if (expectedMediaType is not null
             && !string.Equals(plan.IsMovie ? "movie" : "series", expectedMediaType, StringComparison.Ordinal))
@@ -532,6 +535,9 @@ public sealed partial class AniWorldRequestApplicationService
             throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Der gefundene Medientyp stimmt nicht mit der Auswahl überein.");
         }
 
+        if (plan.UnavailableCount > 0 && !request.AllowPartial)
+            throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Die Sprache ist nicht für alle fehlenden Inhalte bestätigt. Bitte den Teilumfang ausdrücklich bestätigen.");
+        if (plan.MissingItems.Count == 0 && plan.UnavailableCount > 0) throw NoProviderAvailable();
         if (plan.MissingItems.Count == 0)
         {
             return new SubmitMediaRequestResult(SubmitDisposition.AlreadyAvailable, null, null, 0);
@@ -635,9 +641,15 @@ public sealed partial class AniWorldRequestApplicationService
                         SeriesUrl = request.SeriesUrl,
                         Source = request.Source,
                         MediaType = request.MediaType,
+                        Language = request.Language,
+                        Provider = request.Provider,
                     },
                     cancellationToken,
-                    requireGrant: false).ConfigureAwait(false);
+                    requireGrant: false, refreshOffers: true).ConfigureAwait(false);
+                if (refreshedPlan.Variants.TryGetValue(request.Language, out var checkedVariant)
+                    && request.Episodes.Any(item => checkedVariant.UnavailableUrls.Contains(item.Url))) throw DownloadOptionsChanged();
+                var approved = request.Episodes.Select(item => item.Url).ToHashSet(StringComparer.Ordinal);
+                refreshedPlan = refreshedPlan with { MissingItems = refreshedPlan.MissingItems.Where(item => approved.Contains(item.Url)).ToArray() };
                 if (refreshedPlan.MissingItems.Count == 0)
                 {
                     await _store.MarkAvailableAsync(id, decidedBy, CancellationToken.None).ConfigureAwait(false);
@@ -705,7 +717,7 @@ public sealed partial class AniWorldRequestApplicationService
             && normalizedType is not null && item.MediaTypes.Contains(normalizedType, StringComparer.Ordinal));
     }
 
-    private async Task<MissingMediaPlan> BuildMissingPlanAsync(
+    private async Task<MissingMediaPlan> BuildLegacyMissingPlanAsync(
         string userId,
         AutomaticMediaRequest request,
         CancellationToken cancellationToken,
@@ -840,11 +852,11 @@ public sealed partial class AniWorldRequestApplicationService
                         SelectedPages = [episode.PageNumber.Value],
                     }
                     : new AniWorldDownloadItem(episode.Url));
-                if (missing.Count > MaxEpisodesPerRequest)
+                if (missing.Count > 500)
                 {
                     throw new AniWorldApplicationException(
                         HttpStatusCode.BadRequest,
-                        $"Es fehlen mehr als {MaxEpisodesPerRequest} Episoden. Bitte den Titel in mehreren Schritten einreihen.");
+                        "Es fehlen mehr als 500 Manga-Seiten. Bitte den Titel in mehreren Schritten einreihen.");
                 }
             }
         }
@@ -921,11 +933,11 @@ public sealed partial class AniWorldRequestApplicationService
         string userId,
         string source,
         string episodeUrl,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool refresh = false)
     {
         try
         {
-            var response = await _aniWorld.GetProvidersAsync(episodeUrl, cancellationToken).ConfigureAwait(false);
+            var response = await _aniWorld.GetProvidersAsync(episodeUrl, cancellationToken, refresh).ConfigureAwait(false);
             _grants.GrantFromJson(userId, source, response);
             var output = ReadProviderOptions(response);
             if (output.Count == 0)
@@ -994,6 +1006,13 @@ public sealed partial class AniWorldRequestApplicationService
         string preferredProvider,
         bool allowFallback)
     {
+        if (plan.Variants.Count > 0)
+        {
+            if (!plan.Variants.TryGetValue(preferredLanguage, out var variant) || variant.Items.Count == 0) throw DownloadOptionsChanged();
+            var provider = variant.Providers.FirstOrDefault(value => value.Equals(preferredProvider, StringComparison.OrdinalIgnoreCase));
+            if (provider is null && allowFallback) provider = "Automatic";
+            return provider is null ? throw DownloadOptionsChanged() : (variant.Items[0].Language!, provider);
+        }
         var commonLanguages = plan.Languages.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var usable = plan.Providers
             .Where(pair => pair.Value.Count > 0
@@ -1542,6 +1561,8 @@ public sealed record MissingMediaPlan(
     IReadOnlyDictionary<string, IReadOnlyList<string>> Providers,
     string PlanToken)
 {
+    public IReadOnlyDictionary<string, VideoLanguagePlan> Variants { get; init; } = new Dictionary<string, VideoLanguagePlan>();
+    public int UnavailableCount { get; init; }
     public MissingPlanResponse ToResponse()
         => new(
             Title,
@@ -1553,7 +1574,7 @@ public sealed record MissingMediaPlan(
             SelectionLabel,
             Languages,
             Providers,
-            PlanToken);
+            PlanToken, Variants.ToDictionary(pair => pair.Key, pair => new LanguageCoverage(pair.Value.AvailableCount, pair.Value.ExistingCount, pair.Value.Items.Count, pair.Value.UnavailableCount)), UnavailableCount);
 }
 
 public sealed record MissingPlanResponse(
@@ -1566,7 +1587,22 @@ public sealed record MissingPlanResponse(
     [property: JsonPropertyName("selection_label")] string SelectionLabel,
     [property: JsonPropertyName("languages")] IReadOnlyList<string> Languages,
     [property: JsonPropertyName("providers")] IReadOnlyDictionary<string, IReadOnlyList<string>> Providers,
-    [property: JsonPropertyName("plan_token")] string PlanToken);
+    [property: JsonPropertyName("plan_token")] string PlanToken,
+    [property: JsonPropertyName("coverage")] IReadOnlyDictionary<string, LanguageCoverage> Coverage,
+    [property: JsonPropertyName("unavailable_count")] int UnavailableCount);
+
+public sealed record LanguageCoverage(
+    [property: JsonPropertyName("available_count")] int AvailableCount,
+    [property: JsonPropertyName("existing_count")] int ExistingCount,
+    [property: JsonPropertyName("missing_count")] int MissingCount,
+    [property: JsonPropertyName("unavailable_count")] int UnavailableCount);
+
+public sealed record VideoLanguagePlan(int AvailableCount, int ExistingCount, int UnavailableCount,
+    IReadOnlyList<AniWorldDownloadItem> Items, IReadOnlyList<string> Providers)
+{
+    public IReadOnlySet<string> ExistingUrls { get; init; } = new HashSet<string>();
+    public IReadOnlySet<string> UnavailableUrls { get; init; } = new HashSet<string>();
+}
 
 public enum SubmitDisposition
 {
