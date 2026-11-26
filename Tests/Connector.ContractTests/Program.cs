@@ -59,6 +59,7 @@ var tests = new (string Name, Action Run)[]
     ("real HTTP/MVC discovery search and partial failures use Jellyfin defaults", HttpContractScenarios.RealJellyfinWireContract),
     ("controller wire JSON matches actual Jellyfin serializer defaults", CatalogScenarios.ControllerJsonMatchesJellyfinDefaultAndCamelCase),
     ("source errors retain HTTP context without suppressing other results", CatalogScenarios.SearchErrorsKeepHttpContextAndOtherSources),
+    ("an empty source answer is no hits, a real outage stays an error", CatalogScenarios.EmptySourceAnswerIsNoHitsNotAnError),
     ("legacy sources 404 preserves settings fallback", CatalogScenarios.LegacySources404UsesSettingsFallback),
     ("two search groups respect permissions", CatalogScenarios.TwoSearchGroupsRespectPermissions),
     ("grouped search keeps films series manga and unknown types", CatalogScenarios.GroupedVideoSearchKeepsMixedAndUnknownTypes),

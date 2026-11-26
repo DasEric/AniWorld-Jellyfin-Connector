@@ -487,6 +487,12 @@ public sealed partial class AniWorldClient
             {
                 if (!response.IsSuccessStatusCode)
                 {
+                    if (response.StatusCode == HttpStatusCode.BadGateway && relativePath == "api/search"
+                        && await IsEmptySourceAnswerAsync(response, requestToken).ConfigureAwait(false))
+                    {
+                        return JsonSerializer.SerializeToElement(new { results = Array.Empty<object>() });
+                    }
+
                     throw SafeUpstreamError(response.StatusCode, method.Method, relativePath);
                 }
 
@@ -571,6 +577,27 @@ public sealed partial class AniWorldClient
             return true;
         }
         catch (AniWorldException)
+        {
+            return false;
+        }
+    }
+
+    // AniWorld answers a search without hits with HTTP 200 and an empty body. Downloader
+    // 2.5.0 reports that as "Search on <site> returned no valid response" (HTTP 502).
+    // That exact case means "no hits", not an outage; every other failure stays an error.
+    private static async Task<bool> IsEmptySourceAnswerAsync(HttpResponseMessage response, CancellationToken token)
+    {
+        try
+        {
+            if (response.Content.Headers.ContentLength > 4096) return false;
+            var text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+            if (text.Length > 4096) return false;
+            using var document = JsonDocument.Parse(text);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String
+                && System.Text.RegularExpressions.Regex.IsMatch(error.GetString()!, @"^Search on [a-z0-9_-]+ returned no valid response$");
+        }
+        catch (Exception exception) when (exception is JsonException or HttpRequestException or IOException)
         {
             return false;
         }

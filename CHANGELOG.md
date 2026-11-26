@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.2.4
+
+- **Kein falscher AniWorld-Fehler mehr:** AniWorld beantwortet eine Suche ohne Treffer mit einer leeren Antwort. H0melab Downloader 2.5.0 meldet das als HTTP 502 („returned no valid response“). Der Connector wertet genau diesen Fall jetzt als „keine Treffer“. Echte Ausfälle werden weiterhin angezeigt.
+- **Cover aus anderen Quellen:** Liefert eine Quelle kein Bild, zum Beispiel SerienStream bei „2 Broke Girls“, übernimmt die Karte das Cover eines gleichnamigen Treffers einer anderen Quelle derselben Suche. Dafür sind keine zusätzlichen Anfragen nötig.
+- **Strengere Trefferauswahl:** Titel, die nur teilweise passen, werden ausgeblendet, zum Beispiel „2-nen 2-kumi no Stadium Girl“ bei „2 broke girls“.
+
 ## 2.2.3
 
 - **Suche quellenübergreifend:** Sobald irgendeine Quelle einen wirklich passenden Titel liefert, verschwindet der Beifang aller Quellen. Das gilt auch für Treffer, die schon angezeigt wurden, zum Beispiel MangaFire-Treffer, in denen bei „2 broke girls“ nur eine „2“ oder „Broke“ vorkommt. Passende Treffer rücken vor die übrigen. Findet keine Quelle etwas Passendes, bleiben alle Treffer sichtbar, etwa über lokalisierte Titel.

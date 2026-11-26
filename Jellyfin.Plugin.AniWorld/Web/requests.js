@@ -251,6 +251,7 @@ export default function (view, params) {
         const relevance = relevanceOf(item);
         if (rank.strong && relevance !== null && relevance < KEEP_MATCH) continue;
         const card = createMediaCard(item, group.source, group.label);
+        sharePosters(rank, card, item, group.source);
         if (relevance !== null && relevance >= STRONG_MATCH) host.insertBefore(card, rank.weak[0] || before);
         else {
           host.insertBefore(card, before); rank.weak.push(card);
@@ -275,12 +276,33 @@ export default function (view, params) {
   // Sources answer one by one. As soon as any source has a real title match, filler
   // from every source (already shown or still to come) is dropped and real matches
   // move ahead of the remaining hits.
-  const STRONG_MATCH = 0.75; const KEEP_MATCH = 0.6;
-  const searchRank = { generation: -1, strong: false, filler: [], weak: [] };
+  const STRONG_MATCH = 0.75; const KEEP_MATCH = 0.7;
+  const searchRank = { generation: -1, strong: false, filler: [], weak: [], posters: new Map(), waiting: new Map() };
   function rankFor(generation) {
-    if (searchRank.generation !== generation) Object.assign(searchRank, { generation, strong: false, filler: [], weak: [] });
+    if (searchRank.generation !== generation) Object.assign(searchRank, { generation, strong: false, filler: [], weak: [], posters: new Map(), waiting: new Map() });
     return searchRank;
   }
+  // Same title in another source of this search: reuse its poster instead of the placeholder.
+  function titleKey(item) { return String((item && (item.title || item.name)) || '').toLowerCase().replace(/<[^>]*>/g, '').replace(/[^\p{L}\p{N}]+/gu, ''); }
+  function addCover(card, poster, item, sourceId) {
+    if (typeof card.insertBefore !== 'function' || typeof loadCover !== 'function' || (card.querySelector && card.querySelector('.mf-cover'))) return;
+    const cover = document.createElement('img'); cover.className = 'mf-cover'; cover.loading = 'lazy'; cover.alt = '';
+    card.insertBefore(cover, card.firstChild); loadCover(cover, poster, item, sourceId);
+  }
+  function sharePosters(rank, card, item, sourceId) {
+    if (item && isCatalogKind(item.media_kind)) return;
+    const key = titleKey(item); if (!key) return;
+    const poster = item.poster_url || item.cover_url;
+    if (poster) {
+      if (!rank.posters.has(key)) rank.posters.set(key, { poster, item, sourceId });
+      (rank.waiting.get(key) || []).forEach((waiting) => addCover(waiting, poster, item, sourceId)); rank.waiting.delete(key);
+    } else if (rank.posters.has(key)) {
+      const found = rank.posters.get(key); addCover(card, found.poster, found.item, found.sourceId);
+    } else {
+      rank.waiting.set(key, (rank.waiting.get(key) || []).concat([card]));
+    }
+  }
+  function isCatalogKind(kind) { return kind === 'ebook' || kind === 'audiobook' || kind === 'podcast'; }
   function relevanceOf(item) { return item && typeof item.relevance === 'number' ? item.relevance : null; }
   function createMediaCard(item, sourceId, sourceLabel) {
     const card = document.createElement('article'); card.className = 'mf-card'; card.tabIndex = 0;

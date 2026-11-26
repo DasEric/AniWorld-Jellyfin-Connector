@@ -63,3 +63,16 @@ test('a real match in a later source removes earlier filler and moves ahead', as
   await f.context.appendResults(host, [hits('sto', [['2 Broke Girls', 1], ['Broke', 0.333]])], {}, 1);
   assert.deepEqual(list.map((card) => card.source + ':' + card.item.title), ['moflix:2 Broke Girls', 'sto:2 Broke Girls', 'localized:Ohne Bewertung']);
 });
+
+test('a hit without poster borrows the poster of the same title from another source', async () => {
+  const f = fixture();
+  const covers = [];
+  const makeCard = (item, source) => ({ item, source, firstChild: null, insertBefore(cover) { covers.push([source, cover]); } });
+  f.context.createMediaCard = (item, source) => makeCard(item, source);
+  f.context.document = { createElement: () => ({}) };
+  vm.runInContext('function loadCover(image, poster) { image.poster = poster; }', f.context);
+  const host = { insertBefore() {} };
+  await f.context.appendResults(host, [{ source: 'sto', label: 'SerienStream', data: { results: [{ title: '2 Broke Girls', relevance: 1 }] } }], {}, 1);
+  await f.context.appendResults(host, [{ source: 'moflix', label: 'Moflix', data: { results: [{ title: '2 Broke Girls', poster_url: 'https://img.test/2bg.jpg', relevance: 1 }] } }], {}, 1);
+  assert.deepEqual(covers.map(([source, cover]) => [source, cover.poster]), [['sto', 'https://img.test/2bg.jpg']]);
+});

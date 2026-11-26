@@ -197,7 +197,7 @@ internal static class SearchRelevance
     }
 
     private const double StrongMatch = 0.75;
-    private const double KeepMatch = 0.6;
+    private const double KeepMatch = 0.7;
 
     internal static JsonElement Filter(JsonElement response, string query, string? category, AniWorldSiteInfo? source = null)
     {

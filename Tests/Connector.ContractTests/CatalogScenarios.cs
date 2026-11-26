@@ -84,6 +84,23 @@ internal static class CatalogScenarios
         }
     }
 
+    internal static void EmptySourceAnswerIsNoHitsNotAnError()
+    {
+        // AniWorld answers "no hits" with an empty body; Downloader 2.5.0 turns that into a 502.
+        using (var fixture = new Fixture { VideoSearchError = "Search on moflix returned no valid response" })
+        {
+            var result = fixture.Application.SearchAsync("user", "2 broke girls", "all", "video", false, CancellationToken.None).GetAwaiter().GetResult();
+            var empty = result.Groups.Single(group => group.Source == "moflix");
+            Check(empty.Error is null && empty.Data!.Value.GetProperty("results").GetArrayLength() == 0);
+        }
+        // A real outage keeps its error.
+        using (var fixture = new Fixture { VideoSearchError = "Search on moflix failed" })
+        {
+            var result = fixture.Application.SearchAsync("user", "2 broke girls", "all", "video", false, CancellationToken.None).GetAwaiter().GetResult();
+            Check(result.Groups.Single(group => group.Source == "moflix").Error!.Contains("HTTP 502", StringComparison.Ordinal));
+        }
+    }
+
     internal static void SearchErrorsKeepHttpContextAndOtherSources()
     {
         using var fixture = new Fixture { FailVideoSearch = true };
@@ -146,6 +163,8 @@ internal static class CatalogScenarios
         Check(Titles("brokegirls").SequenceEqual(["2 Broke Girls"]));
         Check(Titles("kung fu panda").SequenceEqual(["Kung Fu Panda 2"]));
         Check(Titles("kung fu pnada").SequenceEqual(["Kung Fu Panda 2"]));
+        using var stadium = JsonDocument.Parse("""{"title":"2-nen 2-kumi no Stadium Girl"}""");
+        Check(SearchRelevance.Relevance(stadium.RootElement, "2 broke girls") < 0.7);
         Check(SearchRelevance.Relevance(data.RootElement.GetProperty("results")[0], "2 broke girls") < 0.6);
         // Each hit carries its score so the page can drop filler across sources.
         Check(SearchRelevance.Filter(data.RootElement, "2 broke girls", "video").GetProperty("results")[0].GetProperty("relevance").GetDouble() == 1);
@@ -414,6 +433,7 @@ internal static class CatalogScenarios
         internal bool MissingBrowseTypes;
         internal bool MalformedSearch;
         internal bool FailVideoSearch;
+        internal string? VideoSearchError;
         internal bool LegacySources;
         internal bool VideoPlanning;
         internal List<JsonElement> VideoRequests { get; } = [];
@@ -501,6 +521,8 @@ internal static class CatalogScenarios
                 var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement.Clone();
                 lock (VideoRequests) VideoRequests.Add(payload);
                 if (FailVideoSearch && payload.GetProperty("site").GetString() == "moflix") return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+                if (VideoSearchError is not null && payload.GetProperty("site").GetString() == "moflix")
+                    return new HttpResponseMessage(HttpStatusCode.BadGateway) { Content = new StringContent(JsonSerializer.Serialize(new { error = VideoSearchError }), Encoding.UTF8, "application/json") };
                 data = MalformedSearch ? new { unexpected = true } : (object)new { results = new object[] {
                     new { title = "Gravity Falls", url = "https://example.test/movie", media_type = "movie" },
                     new { title = "Willkommen in Gravity Falls", url = "https://example.test/series", media_type = "series" },

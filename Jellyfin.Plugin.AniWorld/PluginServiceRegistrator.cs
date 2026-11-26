@@ -14,7 +14,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
             .AddHttpClient<AniWorldClient>(client =>
             {
                 client.Timeout = TimeSpan.FromSeconds(90);
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("Jellyfin-AniWorld-Requests/2.2.3");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("Jellyfin-AniWorld-Requests/2.2.4");
             })
             .RedactLoggedHeaders(["X-Api-Key"])
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
