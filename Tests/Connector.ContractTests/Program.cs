@@ -10,6 +10,12 @@ if (args.Contains("--serve-http-contract", StringComparer.Ordinal))
 
 var tests = new (string Name, Action Run)[]
 {
+    ("cover lookup normalizes titles without guessing ids", () =>
+    {
+        if (DownloadManagementService.CoverTitle("Black Mirror (2011)") != DownloadManagementService.CoverTitle("Black Mirror")) throw new Exception("Year suffix breaks cover match");
+        if (DownloadManagementService.CoverTitle("Spider-Man: No Way Home") != "spidermannowayhome") throw new Exception("Punctuation not normalized");
+        if (DownloadManagementService.CoverTitle(null).Length != 0 || DownloadManagementService.CoverTitle("  ").Length != 0) throw new Exception("Empty title matched");
+    }),
     ("subtitle defaults and source validation preserve legacy requests", SubtitleScenarios.DefaultsAndValidation),
     ("subtitle selection survives persistence, duplicate detection and queue payload", SubtitleScenarios.PersistAndSendSelectedSubtitles),
     ("requested soft subtitles are not audio or burned-in video", SubtitleScenarios.RequestedSoftSubtitlesAreNotAudioOrBurnedInVideo),

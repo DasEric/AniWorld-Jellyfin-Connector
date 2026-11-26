@@ -1,5 +1,10 @@
 # Änderungen
 
+## 2.1.1
+
+- **Meine Medien:** Nicht löschbare Titel zeigen jetzt direkt auf der Karte den Grund. Entweder lagen die Dateien schon vor der Anfrage auf dem Server, oder sie wurden seit dem Download verändert bzw. verschoben. In beiden Fällen löscht der Downloader sie aus Sicherheitsgründen nicht.
+- **Cover:** Die Suche in der Jellyfin-Bibliothek ignoriert Jahreszahlen wie „(2011)“, Satzzeichen sowie Groß- und Kleinschreibung. Dadurch werden mehr Cover gefunden. Mehrdeutige Titel zeigen weiterhin den Platzhalter.
+
 ## 2.1.0
 
 - **Neuer Tab „Meine Medien“:** Jeder Benutzer sieht seine selbst angefragten Filme und Serien als Cover-Raster wie bei der Suche, mit Dateianzahl und Größe. Ein Klick öffnet eine Sicherheitsabfrage mit allen betroffenen Dateien. Erst nach Bestätigung werden die Dateien gelöscht und Jellyfin aktualisiert die Bibliothek, sodass Speicher frei wird.

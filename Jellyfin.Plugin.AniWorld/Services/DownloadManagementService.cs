@@ -78,24 +78,35 @@ public sealed class DownloadManagementService
 
     private Guid? CoverItemId(string title, string mediaType)
     {
-        if (string.IsNullOrWhiteSpace(title)) return null;
+        var wanted = CoverTitle(title);
+        if (wanted.Length == 0) return null;
         try
         {
-            var trimmed = title.Trim();
+            // Search without a trailing "(2011)" and punctuation, then compare normalized
+            // titles, so "Black Mirror (2011)" and "Black Mirror" find each other.
+            var term = System.Text.RegularExpressions.Regex.Replace(title, @"\(\s*\d{4}\s*\)", " ").Trim();
+            if (term.Length > 120) term = term[..120];
             var matches = _library.GetItemList(new InternalItemsQuery { Recursive = true,
                     IncludeItemTypes = [mediaType == "series" ? BaseItemKind.Series : BaseItemKind.Movie],
-                    SearchTerm = trimmed.Length > 120 ? trimmed[..120] : trimmed, IsVirtualItem = false, Limit = 20, EnableTotalRecordCount = false })
-                ?.Where(item => string.Equals(item.Name?.Trim(), trimmed, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(item.OriginalTitle?.Trim(), trimmed, StringComparison.OrdinalIgnoreCase))
-                .Take(2).ToArray();
+                    SearchTerm = term, IsVirtualItem = false, Limit = 50, EnableTotalRecordCount = false })
+                ?.Where(item => CoverTitle(item.Name) == wanted || CoverTitle(item.OriginalTitle) == wanted)
+                .Select(item => item.Id).Distinct().Take(2).ToArray();
             // Ambiguous titles show the placeholder instead of a possibly wrong poster.
-            return matches is { Length: 1 } ? matches[0].Id : null;
+            return matches is { Length: 1 } ? matches[0] : null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // A poster is optional; a library lookup failure must never hide own media.
             return null;
         }
+    }
+
+    internal static string CoverTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return string.Empty;
+        var withoutYear = System.Text.RegularExpressions.Regex.Replace(title, @"\(\s*\d{4}\s*\)", " ");
+        return new string(withoutYear.Normalize(System.Text.NormalizationForm.FormKC)
+            .Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
     }
 
     public object ListLibrary(string query)

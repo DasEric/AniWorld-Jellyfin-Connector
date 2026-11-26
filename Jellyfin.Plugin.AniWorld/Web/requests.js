@@ -556,6 +556,14 @@ export default function (view, params) {
         : api.getUrl('Items/' + encodeURIComponent(itemId) + '/Images/Primary', { maxHeight: 480, quality: 90 });
     } catch (error) { return ''; }
   }
+  // The downloader deletes only files it can still prove it created for this request.
+  function lockReason(files) {
+    const states = new Set(files.map((file) => file.state));
+    if (states.has('existing') && !states.has('changed')) return 'Nicht löschbar: Die Dateien lagen schon vor deiner Anfrage auf dem Server.';
+    if (states.has('changed') && !states.has('existing')) return 'Nicht löschbar: Die Dateien wurden seit dem Download verändert oder verschoben.';
+    if (states.has('existing') && states.has('changed')) return 'Nicht löschbar: Dateien waren schon vorhanden oder wurden seit dem Download verändert.';
+    return 'Nicht löschbar: Der Downloader kann diese Dateien gerade nicht als deine nachweisen.';
+  }
   // Own media only: the server lists exclusively downloads whose ownership belongs to
   // this Jellyfin user, and preview/delete re-check that ownership on every call.
   function renderMedia(host, groups) {
@@ -581,7 +589,9 @@ export default function (view, params) {
         card.addEventListener('click', open);
         card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
       } else {
-        card.classList.add('locked'); card.title = 'Diese Dateien können gerade nicht gelöscht werden.';
+        card.classList.add('locked');
+        const reason = document.createElement('div'); reason.className = 'mf-source mf-lockreason';
+        reason.textContent = lockReason(group.files); body.appendChild(reason); card.title = reason.textContent;
       }
       host.appendChild(card);
     });
