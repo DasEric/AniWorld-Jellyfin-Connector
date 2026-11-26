@@ -10,6 +10,13 @@ if (args.Contains("--serve-http-contract", StringComparer.Ordinal))
 
 var tests = new (string Name, Action Run)[]
 {
+    ("storage usage counts a shared disk once and ignores missing paths", () =>
+    {
+        var here = DownloadManagementService.MeasureStorage([Path.GetTempPath(), Path.GetTempPath(), Path.Combine(Path.GetTempPath(), "missing-" + Guid.NewGuid().ToString("N"))]);
+        var once = DownloadManagementService.MeasureStorage([Path.GetTempPath()]);
+        if (!here.Available || here.Total != once.Total || here.Used + here.Free != here.Total || here.Level is not ("good" or "medium" or "low")) throw new Exception("Storage usage is wrong");
+        if (DownloadManagementService.MeasureStorage([]).Available) throw new Exception("Empty storage reported as available");
+    }),
     ("cover lookup normalizes titles without guessing ids", () =>
     {
         if (DownloadManagementService.CoverTitle("Black Mirror (2011)") != DownloadManagementService.CoverTitle("Black Mirror")) throw new Exception("Year suffix breaks cover match");
@@ -43,6 +50,7 @@ var tests = new (string Name, Action Run)[]
     ("missing mount never falls back", MediaLifecycleScenarios.MissingMountNeverFallsBack),
     ("ownership survives history and restart", MediaLifecycleScenarios.OwnershipPersistsWithoutRequestHistory),
     ("deletion rechecks owner and includes only own series files", MediaLifecycleScenarios.DeletionChecksUserAgainAndIncludesOwnSeriesOnly),
+    ("moved own files are deleted through Jellyfin, foreign and pre-existing files stay", MediaLifecycleScenarios.MovedOwnFilesAreDeletedThroughJellyfinOnly),
     ("mount validation checks a real shared file", MediaLifecycleScenarios.SharedMountProbeChecksActualFile),
     ("saved destinations are used immediately", MediaLifecycleScenarios.SavedDestinationsAreUsedImmediately),
     ("Jellix selection follows current connector approval or direct-download policy", CatalogScenarios.JellixSelectionUsesCurrentConnectorPolicy),

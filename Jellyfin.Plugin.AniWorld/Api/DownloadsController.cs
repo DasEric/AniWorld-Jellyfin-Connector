@@ -18,6 +18,9 @@ public sealed class DownloadsController : ControllerBase
     public DownloadsController(DownloadManagementService downloads, MediaTargetRouting routing, AniWorldClient client, UserRateLimiter limiter)
     { _downloads = downloads; _routing = routing; _client = client; _limiter = limiter; }
 
+    [HttpGet("Storage")]
+    public Task<IActionResult> Storage() => Run(() => Task.FromResult(_downloads.StorageUsage(Plugin.Instance?.Configuration)));
+
     [HttpGet("Downloads/Mine")]
     public Task<IActionResult> Mine(CancellationToken token) => Run(async () => await _downloads.ListAsync(Identity(), false, token).ConfigureAwait(false));
 

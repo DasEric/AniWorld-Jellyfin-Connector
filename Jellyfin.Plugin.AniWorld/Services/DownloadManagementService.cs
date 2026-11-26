@@ -36,14 +36,16 @@ public sealed class DownloadManagementService
             var keys = group.Select(entry => entry.RequestKey).ToHashSet(StringComparer.Ordinal);
             var subtitles = group.ToDictionary(entry => entry.RequestKey, entry => entry.SubtitleLanguage);
             var artifacts = files.Where(file => keys.Contains(file.RequestKey) && file.State != "deleted").ToArray();
+            var match = MatchLibrary(group.First(), artifacts);
+            var libraryDeletable = match.Files.Select(file => file.ArtifactId).ToHashSet(StringComparer.Ordinal);
             return new { id = group.First().RequestKey, title = group.First().Title, mediaType = group.First().MediaType,
                 ownerId = admin ? group.Key.OwnerId : null,
-                // Display-only poster lookup. Deletion never uses it; ownership stays the only authority.
-                imageItemId = CoverItemId(group.First().Title, group.First().MediaType),
+                imageItemId = match.ItemId,
                 files = artifacts.Select(file => new { id = file.Id, name = file.Name, language = file.Language, state = file.State,
                     size = file.Size, mediaType = file.MediaType, streams = file.Streams, verification = file.Verification,
                     subtitleLanguage = subtitles[file.RequestKey], subtitleVerification = file.VerifySubtitle(subtitles[file.RequestKey]) }).ToArray(),
-                canDelete = artifacts.Any(file => file.State is "owned" or "missing") };
+                libraryFiles = libraryDeletable.Count,
+                canDelete = artifacts.Any(file => file.State is "owned" or "missing") || libraryDeletable.Count > 0 };
         }).Where(group => group.files.Length > 0).ToArray();
     }
 
@@ -54,11 +56,21 @@ public sealed class DownloadManagementService
         var keys = intents.Where(entry => entry.OwnerId == selected.OwnerId && entry.Source == selected.Source && entry.SeriesUrl == selected.SeriesUrl)
             .Select(entry => entry.RequestKey).ToHashSet(StringComparer.Ordinal);
         var chosen = files.Where(file => keys.Contains(file.RequestKey) && file.State is "owned" or "missing").ToArray();
-        if (chosen.Length is < 1 or > 20_000) throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Bitte zwischen 1 und 20000 eigene Dateien pro Löschvorgang auswählen.");
-        var id = Cache(new DeletePreview(user, admin, DateTime.UtcNow.AddMinutes(2), chosen.Select(file => file.Id).ToArray(), keys.ToArray(), null, []));
-        return new { token = id, title = selected.Title, files = chosen.Select(file => new { id = file.Id, name = file.Name, size = file.Size }),
-            count = chosen.Length, message = admin ? "Admin: Nur die aufgelisteten zugeordneten Dateien werden entfernt. Andere Dateien bleiben erhalten."
-                : "Nur die aufgelisteten eigenen Dateien werden entfernt. Andere Dateien bleiben erhalten." };
+        // Files the downloader can no longer prove (moved, new inode) are still this user's
+        // download when Jellyfin holds a file with the same name and exact byte size.
+        var roots = LibraryRoots();
+        var local = MatchLibrary(selected, files.Where(file => keys.Contains(file.RequestKey) && file.State != "deleted").ToArray()).Files
+            .Select(file => { try { return CheckedFile(file.Path, roots); } catch (AniWorldApplicationException) { return null; } })
+            .OfType<FileSnapshot>().ToArray();
+        if (chosen.Length + local.Length is < 1 or > 20_000) throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Bitte zwischen 1 und 20000 eigene Dateien pro Löschvorgang auswählen.");
+        var id = Cache(new DeletePreview(user, admin, DateTime.UtcNow.AddMinutes(2), chosen.Select(file => file.Id).ToArray(), keys.ToArray(), null, local));
+        var message = admin ? "Admin: Nur die aufgelisteten zugeordneten Dateien werden entfernt. Andere Dateien bleiben erhalten."
+            : "Nur die aufgelisteten eigenen Dateien werden entfernt. Andere Dateien bleiben erhalten.";
+        if (local.Length > 0) message += " " + local.Length + " davon wurden nach dem Download verschoben und werden direkt in der Jellyfin-Bibliothek gelöscht.";
+        return new { token = id, title = selected.Title,
+            files = chosen.Select(file => new { id = file.Id, name = file.Name, size = file.Size })
+                .Concat(local.Select(file => new { id = string.Empty, name = Path.GetFileName(file.Path), size = file.Size })),
+            count = chosen.Length + local.Length, message };
     }
 
     public async Task<JsonElement> ConfirmAsync(string user, bool admin, string previewToken, CancellationToken token)
@@ -69,11 +81,129 @@ public sealed class DownloadManagementService
         var allowed = intents.Select(entry => entry.RequestKey).ToHashSet(StringComparer.Ordinal);
         if (preview.Keys.Any(key => !allowed.Contains(key)) || preview.Ids.Any(id => !files.Any(file => file.Id == id && preview.Keys.Contains(file.RequestKey, StringComparer.Ordinal)
             && file.State is "owned" or "missing" or "deleted"))) throw Missing();
-        var result = await _client.DeleteArtifactsAsync(preview.Ids, token).ConfigureAwait(false);
+        var result = preview.Ids.Length > 0 ? await _client.DeleteArtifactsAsync(preview.Ids, token).ConfigureAwait(false) : default;
         // Physical files are authoritative. Notify Jellyfin even after a partial delete.
         if (files.Any(file => preview.Ids.Contains(file.Id, StringComparer.Ordinal) && file.MediaType == "movie")) _tasks?.QueueScheduledTask<AniWorldMovieLibraryScanTask>();
         if (files.Any(file => preview.Ids.Contains(file.Id, StringComparer.Ordinal) && file.MediaType == "series")) _tasks?.QueueScheduledTask<AniWorldSeriesLibraryScanTask>();
-        return result;
+        if (preview.Snapshots.Count == 0) return result;
+
+        // Re-prove every moved file at confirmation time: same owner group, same
+        // Jellyfin match by name and size, unchanged since the preview, inside a library.
+        var keys = preview.Keys.ToHashSet(StringComparer.Ordinal);
+        var intent = intents.First(entry => keys.Contains(entry.RequestKey));
+        var matched = MatchLibrary(intent, files.Where(file => keys.Contains(file.RequestKey) && file.State != "deleted").ToArray()).Files
+            .ToDictionary(file => file.Path, StringComparer.Ordinal);
+        var items = new List<object>();
+        if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("items", out var remote) && remote.ValueKind == JsonValueKind.Array)
+            items.AddRange(remote.EnumerateArray().Select(item => (object)item.Clone()));
+        foreach (var snapshot in preview.Snapshots)
+        {
+            var status = "conflict";
+            try
+            {
+                if (matched.TryGetValue(snapshot.Path, out var file) && CheckedFile(snapshot.Path) == snapshot)
+                {
+                    DeleteLibraryFile(file);
+                    status = "deleted";
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or AniWorldApplicationException)
+            {
+                status = "conflict";
+            }
+            items.Add(new { id = Path.GetFileName(snapshot.Path), status });
+        }
+        lock (_indexGate) _index = null;
+        if (intent.MediaType == "movie") _tasks?.QueueScheduledTask<AniWorldMovieLibraryScanTask>();
+        else _tasks?.QueueScheduledTask<AniWorldSeriesLibraryScanTask>();
+        return JsonSerializer.SerializeToElement(new { items });
+    }
+
+    private static readonly string[] SidecarExtensions = [".nfo", ".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup", ".jpg", ".jpeg", ".png", ".webp", ".bif"];
+
+    private void DeleteLibraryFile(LibraryFile file)
+    {
+        var directory = Path.GetDirectoryName(file.Path)!;
+        var stem = Path.GetFileNameWithoutExtension(file.Path);
+        // Only the video and its own sidecars (same base name); other episodes stay untouched.
+        var sidecars = Directory.EnumerateFiles(directory).Where(path =>
+        {
+            var name = Path.GetFileName(path);
+            return !string.Equals(path, file.Path, StringComparison.Ordinal)
+                && (name.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase) || name.StartsWith(stem + "-", StringComparison.OrdinalIgnoreCase))
+                && SidecarExtensions.Contains(Path.GetExtension(name), StringComparer.OrdinalIgnoreCase)
+                && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0;
+        }).ToArray();
+        File.Delete(file.Path);
+        foreach (var sidecar in sidecars) File.Delete(sidecar);
+        var item = _library.GetItemById(file.ItemId);
+        if (item is not null) _library.DeleteItem(item, new DeleteOptions { DeleteFileLocation = false }, true);
+        var roots = LibraryRoots();
+        for (var parent = new DirectoryInfo(directory); parent is not null && !roots.Contains(Path.TrimEndingDirectorySeparator(parent.FullName), StringComparer.Ordinal); parent = parent.Parent)
+        {
+            if (Directory.EnumerateFileSystemEntries(parent.FullName).Any()) break;
+            parent.Delete(false); // only empty folders, never recursive
+        }
+    }
+
+    // Jellyfin-side identity of the user's downloaded files: same file name and exact
+    // byte size. The owning series or movie also supplies the poster.
+    private LibraryMatch MatchLibrary(DownloadIntent intent, IReadOnlyList<DownloadArtifact> artifacts)
+    {
+        try
+        {
+            var index = FileIndex();
+            var wantEpisodes = intent.MediaType == "series";
+            var used = new HashSet<string>(StringComparer.Ordinal);
+            var hits = new List<(DownloadArtifact Artifact, IndexedFile File)>();
+            foreach (var artifact in artifacts)
+            {
+                if (!index.TryGetValue(artifact.Name, out var candidates)) continue;
+                var hit = candidates.FirstOrDefault(file => file.IsEpisode == wantEpisodes && !used.Contains(file.Path) && SizeOf(file.Path) == artifact.Size);
+                if (hit is null) continue;
+                used.Add(hit.Path);
+                hits.Add((artifact, hit));
+            }
+            var owners = hits.GroupBy(hit => hit.File.OwnerId).OrderByDescending(group => group.Count()).ToArray();
+            // Files split evenly over two shows are ambiguous: placeholder poster, nothing deletable.
+            if (owners.Length == 0 || (owners.Length > 1 && owners[0].Count() == owners[1].Count()))
+                return new LibraryMatch(CoverItemId(intent.Title, intent.MediaType), []);
+            var owner = owners[0];
+            return new LibraryMatch(owner.Key, owner.Where(hit => hit.Artifact.State == "changed")
+                .Select(hit => new LibraryFile(hit.Artifact.Id, hit.File.Path, hit.File.ItemId)).ToArray());
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return new LibraryMatch(null, []);
+        }
+    }
+
+    private static long SizeOf(string path)
+    {
+        try { var info = new FileInfo(path); return info.Exists ? info.Length : -1; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return -1; }
+    }
+
+    private readonly object _indexGate = new();
+    private (DateTime Built, Dictionary<string, IndexedFile[]> Files)? _index;
+
+    private Dictionary<string, IndexedFile[]> FileIndex()
+    {
+        lock (_indexGate)
+        {
+            if (_index is { } cached && cached.Built > DateTime.UtcNow.AddMinutes(-2)) return cached.Files;
+            var items = _library.GetItemList(new InternalItemsQuery { Recursive = true, IncludeItemTypes = [BaseItemKind.Episode, BaseItemKind.Movie],
+                IsVirtualItem = false, EnableTotalRecordCount = false }) ?? [];
+            var files = items.Where(item => !string.IsNullOrEmpty(item.Path))
+                .Select(item => item is MediaBrowser.Controller.Entities.TV.Episode episode
+                    ? new IndexedFile(item.Id, episode.SeriesId, item.Path, true)
+                    : new IndexedFile(item.Id, item.Id, item.Path, false))
+                .Where(file => file.OwnerId != Guid.Empty)
+                .GroupBy(file => Path.GetFileName(file.Path), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+            _index = (DateTime.UtcNow, files);
+            return files;
+        }
     }
 
     private Guid? CoverItemId(string title, string mediaType)
@@ -99,6 +229,45 @@ public sealed class DownloadManagementService
             // A poster is optional; a library lookup failure must never hide own media.
             return null;
         }
+    }
+
+    // Storage of the media libraries the connector downloads into; all libraries otherwise.
+    public object StorageUsage(Configuration.PluginConfiguration? config)
+    {
+        var configured = new[] { config?.MovieLibraryPath, config?.SeriesLibraryPath }.Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => path!).ToArray();
+        string[] paths;
+        try { paths = configured.Length > 0 ? configured : LibraryRoots(); }
+        catch (Exception exception) when (exception is not OperationCanceledException) { paths = configured; }
+        var info = MeasureStorage(paths);
+        // Explicit lowercase names: Jellyfin's serializer does not camel-case anonymous results for us.
+        return new { available = info.Available, total = info.Total, used = info.Used, free = info.Free, level = info.Level };
+    }
+
+    internal static StorageInfo MeasureStorage(IEnumerable<string> paths)
+    {
+        var drives = new List<(long Total, long Free)>();
+        foreach (var path in paths.Distinct(StringComparer.Ordinal))
+        {
+            try
+            {
+                if (!Directory.Exists(path)) continue;
+                var full = Path.GetFullPath(path);
+                var drive = new DriveInfo(OperatingSystem.IsWindows() ? Path.GetPathRoot(full)! : full);
+                if (!drive.IsReady || drive.TotalSize <= 0) continue;
+                // Libraries on the same disk report identical numbers and are counted once.
+                var key = (drive.TotalSize, drive.AvailableFreeSpace);
+                if (!drives.Contains(key)) drives.Add(key);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // An unreadable mount is left out instead of failing the page.
+            }
+        }
+        if (drives.Count == 0) return new StorageInfo(false, 0, 0, 0, "unknown");
+        var total = drives.Sum(drive => drive.Total);
+        var free = Math.Clamp(drives.Sum(drive => drive.Free), 0, total);
+        var freeShare = (double)free / total;
+        return new StorageInfo(true, total, total - free, free, freeShare >= 0.30 ? "good" : freeShare >= 0.10 ? "medium" : "low");
     }
 
     internal static string CoverTitle(string? title)
@@ -140,16 +309,23 @@ public sealed class DownloadManagementService
             ? Directory.EnumerateFiles(path.FullName, "*", SearchOption.AllDirectories) : [path.FullName])
             .Where(File.Exists).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         if (paths.Length > 20_000) throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Bitte einen kleineren Bibliothekseintrag auswählen.");
-        var roots = _library.GetVirtualFolders().SelectMany(folder => folder.Locations).Select(Path.GetFullPath).ToArray();
-        return paths.Select(path =>
-        {
-            var full = Path.GetFullPath(path);
-            if (!roots.Any(root => !Path.GetRelativePath(root, full).StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(Path.GetRelativePath(root, full)))) throw Missing();
-            for (FileSystemInfo? part = new FileInfo(full); part is not null; part = part is FileInfo file ? file.Directory : ((DirectoryInfo)part).Parent)
-                if ((part.Attributes & FileAttributes.ReparsePoint) != 0) throw Missing();
-            var info = new FileInfo(full);
-            return new FileSnapshot(full, info.Length, info.LastWriteTimeUtc.Ticks);
-        }).ToArray();
+        var roots = LibraryRoots();
+        return paths.Select(path => CheckedFile(path, roots)).ToArray();
+    }
+
+    private string[] LibraryRoots()
+        => _library.GetVirtualFolders().SelectMany(folder => folder.Locations)
+            .Select(location => Path.TrimEndingDirectorySeparator(Path.GetFullPath(location))).ToArray();
+
+    // A file is deletable only inside a Jellyfin library root and never through a link.
+    private FileSnapshot CheckedFile(string path, string[]? roots = null)
+    {
+        var full = Path.GetFullPath(path);
+        if (!(roots ?? LibraryRoots()).Any(root => !Path.GetRelativePath(root, full).StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(Path.GetRelativePath(root, full)))) throw Missing();
+        for (FileSystemInfo? part = new FileInfo(full); part is not null; part = part is FileInfo file ? file.Directory : ((DirectoryInfo)part).Parent)
+            if ((part.Attributes & FileAttributes.ReparsePoint) != 0) throw Missing();
+        var info = new FileInfo(full);
+        return new FileSnapshot(full, info.Length, info.LastWriteTimeUtc.Ticks);
     }
 
     private string Cache(DeletePreview preview)
@@ -167,4 +343,8 @@ public sealed class DownloadManagementService
     private static AniWorldApplicationException Missing() => new(HttpStatusCode.NotFound, "Keine passende eigene Datei oder gültige Löschvorschau gefunden.");
     private sealed record DeletePreview(string User, bool Admin, DateTime Expires, string[] Ids, string[] Keys, Guid? LibraryItem, IReadOnlyList<FileSnapshot> Snapshots);
     private sealed record FileSnapshot(string Path, long Size, long Modified);
+    internal sealed record StorageInfo(bool Available, long Total, long Used, long Free, string Level);
+    private sealed record LibraryFile(string ArtifactId, string Path, Guid ItemId);
+    private sealed record LibraryMatch(Guid? ItemId, IReadOnlyList<LibraryFile> Files);
+    private sealed record IndexedFile(Guid ItemId, Guid OwnerId, string Path, bool IsEpisode);
 }

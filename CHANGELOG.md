@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2.2.0
+
+- **Verschobene Downloads löschbar:** Hat der Downloader eine eigene Datei als „verändert/verschoben“ markiert (z. B. nach dem Unraid-Mover), sucht der Connector sie in der Jellyfin-Bibliothek. Maßgeblich sind gleicher Dateiname und exakt gleiche Dateigröße. Wird sie gefunden, kann der anfragende Benutzer sie in „Meine Medien“ löschen. Gelöscht werden nur die Videodatei und ihre zugehörigen Begleitdateien (gleicher Dateiname, z. B. .nfo und .srt), danach entfernt Jellyfin den Eintrag.
+- **Sicherheit:** Beim Bestätigen werden Besitz, Dateiname, Größe und Änderungszeit erneut geprüft. Die Datei muss in einer Jellyfin-Bibliothek liegen und darf keine Verknüpfung sein. Dateien, die schon vor der Anfrage vorhanden waren, sowie Dateien anderer Benutzer bleiben gesperrt.
+- **Cover:** Serien bekommen ihr Cover jetzt über die in Jellyfin gefundenen Episodendateien, nicht mehr nur über den Titel.
+- **Speicheranzeige:** Oben neben dem Modus steht, wie viel Speicher der Film- und Serienbibliothek belegt und frei ist, mit Füllbalken. Die Farbe ist grün ab 30 % frei, orange ab 10 % und rot darunter. Bibliotheken auf derselben Platte werden nur einmal gezählt. Nach dem Löschen aktualisiert sich die Anzeige sofort.
+
 ## 2.1.1
 
 - **Meine Medien:** Nicht löschbare Titel zeigen jetzt direkt auf der Karte den Grund. Entweder lagen die Dateien schon vor der Anfrage auf dem Server, oder sie wurden seit dem Download verändert bzw. verschoben. In beiden Fällen löscht der Downloader sie aus Sicherheitsgründen nicht.

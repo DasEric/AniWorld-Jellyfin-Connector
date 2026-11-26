@@ -113,11 +113,27 @@ export default function (view, params) {
       state.status = Object.assign({}, state.status, status); applyMaintenance();
     } catch (_) { /* the last known state stays visible */ }
   }
+  // Free space of the media libraries: green from 30 % free, orange from 10 %, red below.
+  async function loadStorage() {
+    const host = q('storage');
+    try {
+      const info = await call('Storage');
+      if (disposed || !view.isConnected) return;
+      if (!info || !info.available || !info.total) { host.hidden = true; return; }
+      const usedShare = Math.min(100, Math.max(0, (info.used / info.total) * 100));
+      host.classList.remove('good', 'medium', 'low'); host.classList.add(info.level || 'good');
+      q('storage-text').textContent = formatSize(info.used) + ' von ' + formatSize(info.total) + ' belegt · ' + formatSize(info.free) + ' frei';
+      q('storage-fill').style.width = usedShare.toFixed(1) + '%';
+      host.title = Math.round(100 - usedShare) + ' % Speicher frei';
+      host.hidden = false;
+    } catch (_) { host.hidden = true; }
+  }
   async function boot() {
     try {
       state.status = await call('Status');
       if (disposed || !view.isConnected) return;
       q('mode').textContent = state.status.mode === 'automatic' ? 'Direkter Download' : 'Freigabe durch Admin';
+      loadStorage();
       if (!state.status.configured) notice('Das Plugin ist noch nicht mit AniWorld verbunden.', true);
       applyMaintenance();
       const data = await call('Sources');
@@ -628,6 +644,7 @@ export default function (view, params) {
       const conflicts = (result.items || []).filter((item) => item.status !== 'deleted').length;
       notice(conflicts ? conflicts + ' Dateien wurden wegen Änderungen oder Dateifehlern nicht gelöscht. Bitte neu prüfen.' : 'Dateien gelöscht. Jellyfin aktualisiert den Bibliotheksbestand.', conflicts > 0);
       await loadDownloads(selection.admin);
+      loadStorage();
       if (selection.base === 'Admin/Library') await loadLibrary();
     } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); }
     finally { selection.running = false; if (!disposed && view.isConnected) closeDeletePreview(); }

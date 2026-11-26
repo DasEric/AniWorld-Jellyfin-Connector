@@ -191,6 +191,38 @@ internal static class MediaLifecycleScenarios
         catch (AniWorldApplicationException error) { Check(error.StatusCode == HttpStatusCode.Conflict); }
     });
 
+    internal static void MovedOwnFilesAreDeletedThroughJellyfinOnly() => Run(async fixture =>
+    {
+        var season = Path.Combine(fixture.Series, "Show", "Season 1");
+        System.IO.Directory.CreateDirectory(season);
+        string Episode(string name) { var path = Path.Combine(season, name); File.WriteAllBytes(path, new byte[100]); return path; }
+        var own = Episode("Show.S01E01.mkv"); var sidecar = Path.ChangeExtension(own, ".nfo"); File.WriteAllText(sidecar, "x");
+        var foreign = Episode("Show.S01E02.mkv"); var existed = Episode("Show.S01E03.mkv");
+        var seriesId = Guid.NewGuid();
+        var proxy = (MediaLibraryProxy)fixture.Library;
+        foreach (var path in new[] { own, foreign, existed })
+            proxy.Items.Add(new MediaBrowser.Controller.Entities.TV.Episode { Id = Guid.NewGuid(), Path = path, SeriesId = seriesId });
+        await fixture.AddReceipt("alice", 'a', '1');
+        fixture.Artifacts[^1] = fixture.Artifacts[^1] with { Name = "Show.S01E01.mkv", State = "changed" };
+        await fixture.AddReceipt("bob", 'b', '2');
+        fixture.Artifacts[^1] = fixture.Artifacts[^1] with { Name = "Show.S01E02.mkv", State = "changed" };
+        await fixture.AddReceipt("alice", 'c', '3');
+        fixture.Artifacts[^1] = fixture.Artifacts[^1] with { Name = "Show.S01E03.mkv", State = "existing" };
+        var service = new DownloadManagementService(fixture.Ownership, fixture.Client, fixture.Library);
+        var list = JsonSerializer.SerializeToElement(await service.ListAsync("alice", false, default));
+        Check(list.GetArrayLength() == 1 && list[0].GetProperty("canDelete").GetBoolean() && list[0].GetProperty("libraryFiles").GetInt32() == 1);
+        Check(list[0].GetProperty("imageItemId").GetGuid() == seriesId);
+        await ExpectApplication(HttpStatusCode.NotFound, () => service.PreviewAsync("bob", false, new string('a', 32), default));
+        var preview = JsonSerializer.SerializeToElement(await service.PreviewAsync("alice", false, new string('a', 32), default));
+        Check(preview.GetProperty("count").GetInt32() == 1);
+        var token = preview.GetProperty("token").GetString()!;
+        await ExpectApplication(HttpStatusCode.NotFound, () => service.ConfirmAsync("bob", false, token, default));
+        var result = await service.ConfirmAsync("alice", false, token, default);
+        Check(result.GetProperty("items")[0].GetProperty("status").GetString() == "deleted");
+        Check(!File.Exists(own) && !File.Exists(sidecar) && File.Exists(foreign) && File.Exists(existed));
+        Check(proxy.Deleted.Count == 1 && fixture.DeletedIds.Count == 0);
+    });
+
     internal static void DeletionChecksUserAgainAndIncludesOwnSeriesOnly() => Run(async fixture =>
     {
         await fixture.AddReceipt("alice", 'a', '1');
@@ -372,6 +404,17 @@ internal static class MediaLifecycleScenarios
 public class MediaLibraryProxy : DispatchProxy
 {
     internal List<VirtualFolderInfo> Folders = [];
-    protected override object? Invoke(MethodInfo? method, object?[]? args) => method?.Name switch
-    { "GetVirtualFolders" => Folders, "GetItemList" => Array.Empty<BaseItem>(), _ => null };
+    internal List<BaseItem> Items = [];
+    internal List<Guid> Deleted = [];
+    protected override object? Invoke(MethodInfo? method, object?[]? args)
+    {
+        switch (method?.Name)
+        {
+            case "GetVirtualFolders": return Folders;
+            case "GetItemList": return Items.ToList();
+            case "GetItemById": return args is { Length: > 0 } && args[0] is Guid id ? Items.FirstOrDefault(item => item.Id == id) : null;
+            case "DeleteItem": if (args is { Length: > 0 } && args[0] is BaseItem item) { Deleted.Add(item.Id); Items.Remove(item); } return null;
+            default: return null;
+        }
+    }
 }
