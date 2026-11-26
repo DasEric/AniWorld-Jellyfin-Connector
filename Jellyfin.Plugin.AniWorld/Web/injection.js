@@ -160,7 +160,16 @@
     try {
       const html = await client.fetch({ url: client.getUrl('AniWorldRequests/Page'), type: 'GET', dataType: 'text' });
       if (generation !== openGeneration || !overlay.isConnected) return;
-      const doc = new DOMParser().parseFromString(html, 'text/html'); const page = doc.querySelector('[data-role="page"]'); content.innerHTML = page ? page.innerHTML : html;
+      const doc = new DOMParser().parseFromString(html, 'text/html'); const page = doc.querySelector('[data-role="page"]');
+      if (page) {
+        // Keep the #AniWorldRequestsPage root: all scoped styles depend on it. Drop the
+        // Jellyfin view-manager markers so the overlay copy is not treated as a routed page.
+        ['data-role', 'data-controller', 'data-require'].forEach(function (name) { page.removeAttribute(name); });
+        page.classList.remove('page', 'type-interior');
+        content.innerHTML = page.outerHTML;
+      } else {
+        content.innerHTML = html;
+      }
       const module = await import(client.getUrl('AniWorldRequests/PageScript') + '?v=' + Date.now());
       if (generation !== openGeneration || !overlay.isConnected) return;
       if (module.default) {
