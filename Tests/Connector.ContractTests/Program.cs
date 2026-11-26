@@ -68,6 +68,7 @@ var tests = new (string Name, Action Run)[]
     ("manga plan tokens retain their concrete request type", CatalogScenarios.MangaPlanRetainsConcreteType),
     ("MegaKino fork episode selectors remain distinct", CatalogScenarios.MegaKinoSelectorsStayDistinct),
     ("downloader search results are authoritative", CatalogScenarios.DownloaderSearchResultsAreAuthoritative),
+    ("search drops unrelated filler and tolerates typos", CatalogScenarios.SearchDropsFillerAndToleratesTypos),
     ("search preserves more than 100 results, upstream order and shared-URL editions", CatalogScenarios.SearchPreservesLargeListsAndEditions),
     ("aliases years authors and editions remain distinct", CatalogScenarios.AliasesYearsAndEditions),
     ("MangaFire is manga, not series", CatalogScenarios.MangaIsNotSeries),

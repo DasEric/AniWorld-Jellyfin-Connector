@@ -248,7 +248,13 @@ export default function (view, params) {
         if (count % 24 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
       }
       if (disposed || generation !== searchGeneration || !view.isConnected) return { count, errors };
-      if (group.error) { errors++; const box = document.createElement('div'); box.className = 'mf-notice mf-error'; box.textContent = group.label + ': ' + group.error; host.insertBefore(box, before); }
+      if (group.error) {
+        // A failing source is a slim full-width line above the hits, not a card between them.
+        errors++;
+        const box = document.createElement('div'); box.className = 'mf-notice mf-error mf-sourceerror';
+        box.textContent = group.label + ' konnte nicht durchsucht werden, die übrigen Quellen werden angezeigt. (' + group.error + ')';
+        host.insertBefore(box, host.firstChild);
+      }
     }
     return { count, errors };
   }

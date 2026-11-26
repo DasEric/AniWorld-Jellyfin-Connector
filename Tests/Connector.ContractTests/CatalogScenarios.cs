@@ -80,7 +80,7 @@ internal static class CatalogScenarios
             using var searchWire = JsonDocument.Parse(JsonSerializer.Serialize(search.Value, options));
             var group = searchWire.RootElement.GetProperty("groups")[0];
             Check(group.GetProperty("source").GetString() == "moflix");
-            Check(group.GetProperty("data").GetProperty("results").GetArrayLength() == 4);
+            Check(group.GetProperty("data").GetProperty("results").GetArrayLength() == 3);
         }
     }
 
@@ -119,9 +119,34 @@ internal static class CatalogScenarios
               {"title":"True True","url":"https://example.test/true","media_type":"series"},
               {"title":"Willkommen in Gravity Falls","url":"https://example.test/gravity","media_type":"series"}]}
             """);
+        // A real match exists, so unrelated filler from the same source is dropped.
         var filtered = SearchRelevance.Filter(data.RootElement, "gravity falls", "series");
-        Check(filtered.GetProperty("results").GetArrayLength() == 3);
-        Check(filtered.GetProperty("results")[0].GetProperty("title").GetString() == "Cat Gravity");
+        Check(filtered.GetProperty("results").GetArrayLength() == 1);
+        Check(filtered.GetProperty("results")[0].GetProperty("title").GetString() == "Willkommen in Gravity Falls");
+        // Without any matching title the source's hits stay (localized titles).
+        var localized = SearchRelevance.Filter(data.RootElement, "spirited away", "series");
+        Check(localized.GetProperty("results").GetArrayLength() == 3);
+        Check(localized.GetProperty("results")[0].GetProperty("title").GetString() == "Cat Gravity");
+    }
+
+    internal static void SearchDropsFillerAndToleratesTypos()
+    {
+        using var data = JsonDocument.Parse("""
+            {"results":[
+              {"title":"Alles steht Kopf 2","url":"https://example.test/1","media_type":"movie"},
+              {"title":"2 Broke Girls","url":"https://example.test/2","media_type":"series"},
+              {"title":"Der Schacht 2","url":"https://example.test/3","media_type":"movie"},
+              {"title":"Kung Fu Panda 2","url":"https://example.test/4","media_type":"movie"},
+              {"title":"Broke","url":"https://example.test/5","media_type":"movie"}]}
+            """);
+        string[] Titles(string query) => SearchRelevance.Filter(data.RootElement, query, "video").GetProperty("results")
+            .EnumerateArray().Select(item => item.GetProperty("title").GetString()!).ToArray();
+        Check(Titles("2 broke girls").SequenceEqual(["2 Broke Girls"]));
+        Check(Titles("2 brok grils").SequenceEqual(["2 Broke Girls"]));
+        Check(Titles("brokegirls").SequenceEqual(["2 Broke Girls"]));
+        Check(Titles("kung fu panda").SequenceEqual(["Kung Fu Panda 2"]));
+        Check(Titles("kung fu pnada").SequenceEqual(["Kung Fu Panda 2"]));
+        Check(SearchRelevance.Relevance(data.RootElement.GetProperty("results")[0], "2 broke girls") < 0.6);
     }
 
     internal static void SearchPreservesLargeListsAndEditions()
@@ -290,7 +315,9 @@ internal static class CatalogScenarios
         var response = fixture.Application.SearchAsync("user", "gravity falls", "all", "video", false, CancellationToken.None).GetAwaiter().GetResult();
         Check(response.Groups.Count == 3);
         Check(response.Groups.All(group => group.Error is null && group.Data!.Value.GetProperty("results").GetArrayLength() > 0));
-        Check(response.Groups.Single(group => group.Source == "moflix").Data!.Value.GetProperty("results").GetArrayLength() == 4);
+        // "Cat Gravity" is unrelated filler next to real "Gravity Falls" hits and is dropped.
+        var moflix = response.Groups.Single(group => group.Source == "moflix").Data!.Value.GetProperty("results");
+        Check(moflix.GetArrayLength() == 3 && moflix.EnumerateArray().All(item => item.GetProperty("title").GetString() != "Cat Gravity"));
         Check(fixture.VideoRequests.All(payload => !payload.TryGetProperty("category", out _)));
     }
 

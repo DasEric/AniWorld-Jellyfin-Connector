@@ -47,5 +47,5 @@ test('one failing source does not suppress successful hits', async () => {
   const result = await f.context.appendResults(f.host, [{ source: 'other', label: 'Other', error: 'HTTP 500' }, group(2)], {}, 1);
   assert.equal(result.errors, 1);
   assert.equal(result.count, 2);
-  assert.equal(f.cards[0].textContent, 'Other: HTTP 500');
+  assert.equal(f.cards[0].textContent, 'Other konnte nicht durchsucht werden, die übrigen Quellen werden angezeigt. (HTTP 500)');
 });

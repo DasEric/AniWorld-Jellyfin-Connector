@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.2.2
+
+- **Suche ohne Beifang:** Liefert eine Quelle mindestens einen wirklich passenden Titel, werden unpassende Treffer dieser Quelle ausgeblendet. Ein Beispiel ist bei „2 broke girls“ jeder Film mit einer „2“ im Titel. Die besten Treffer stehen vorn.
+- **Tippfehler:** Kleine Tippfehler werden toleriert („2 brok grils“, „kung fu pnada“), ebenso zusammengeschriebene Titel („brokegirls“). Zahlen und sehr kurze Wörter müssen exakt passen. Findet eine Quelle gar keinen passenden Titel, bleiben ihre Treffer unverändert, damit Treffer über lokalisierte Titel nicht verloren gehen.
+- **Quellenfehler:** Eine ausgefallene Quelle erscheint als schmale Hinweiszeile über den Treffern statt als Karte im Raster.
+
 ## 2.2.1
 
 - **Löschen im Hintergrund:** Nach dem Bestätigen schließt sich der Dialog sofort, und eine Meldung zeigt an, dass der Titel gelöscht wird. Die Karte bleibt ausgegraut mit „Wird gelöscht…“, bis der Vorgang fertig ist. Danach kommt eine Abschlussmeldung, und die Speicheranzeige aktualisiert sich. Ein Titel, der gerade gelöscht wird, lässt sich nicht erneut löschen, auch nicht aus einem anderen Tab oder Gerät. Löschaufträge laufen nacheinander, und alle Besitz- und Dateiprüfungen finden weiterhin im Auftrag statt. Der Bestätigungsdialog schreibt jetzt korrekt „1 Datei“.

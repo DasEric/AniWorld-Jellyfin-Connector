@@ -115,6 +115,90 @@ internal static class SearchRelevance
         return best;
     }
 
+    // Relevance from 0 to 1 with typo tolerance: every significant query word is
+    // compared with the best title word (exact, prefix, or up to 1-2 typos).
+    internal static double Relevance(JsonElement item, string query)
+    {
+        if (item.ValueKind != JsonValueKind.Object) return 0;
+        string Read(string name) => item.TryGetProperty(name, out var field) && field.ValueKind is JsonValueKind.String or JsonValueKind.Number
+            ? field.ToString() : string.Empty;
+        var words = Normalize(query).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (words.Count == 0) return 0;
+        var year = words.Count > 1 ? words.FirstOrDefault(word => Regex.IsMatch(word, @"^(19|20)\d{2}$")) : null;
+        if (year is not null)
+        {
+            var knownYear = Read("year");
+            if (string.IsNullOrEmpty(knownYear)) knownYear = Read("release_year");
+            if (string.IsNullOrEmpty(knownYear)) knownYear = Regex.Match(Read("title"), @"\b(19|20)\d{2}\b").Value;
+            if (knownYear.Length >= 4 && knownYear[..4] != year) return 0;
+            words.Remove(year);
+        }
+        var significant = words.Where(word => !StopWords.Contains(word)).ToArray();
+        if (significant.Length == 0) significant = words.ToArray();
+        if (significant.Length == 0) return year is not null ? 1 : 0;
+        var titles = new List<string> { Read("title"), Read("name"), Read("original_title") };
+        if (item.TryGetProperty("alternative_titles", out var aliases))
+        {
+            if (aliases.ValueKind == JsonValueKind.String) titles.Add(aliases.GetString()!);
+            else if (aliases.ValueKind == JsonValueKind.Array)
+                titles.AddRange(aliases.EnumerateArray().Where(alias => alias.ValueKind == JsonValueKind.String).Select(alias => alias.GetString()!));
+        }
+        var author = MediaCategories.IsCatalog(Read("media_kind")) ? Normalize(Read("author")) : string.Empty;
+        var compactQuery = string.Concat(significant);
+        var best = 0d;
+        foreach (var title in titles)
+        {
+            var text = Normalize(title);
+            if (text.Length == 0) continue;
+            var tokens = (text + " " + author).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var score = significant.Sum(word => tokens.Max(token => WordSimilarity(word, token))) / significant.Length;
+            // "brokegirls" or "2broke girls": compare the joined spelling as well.
+            var compactTitle = string.Concat(text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(token => !StopWords.Contains(token)));
+            if (compactQuery.Length >= 5 && compactTitle.Length is > 0 and <= 60)
+            {
+                var whole = Similarity(compactQuery, compactTitle);
+                if (whole >= 0.8) score = Math.Max(score, whole);
+            }
+            best = Math.Max(best, score);
+        }
+        return best;
+    }
+
+    private static double WordSimilarity(string word, string token)
+    {
+        if (word == token) return 1;
+        // Numbers and very short words must match exactly: "2" is no hint for "2 Broke Girls".
+        if (word.Length <= 2 || word.All(char.IsDigit) || token.All(char.IsDigit)) return 0;
+        if (word.Length >= 3 && token.StartsWith(word, StringComparison.Ordinal)) return 0.9;
+        if (word.Length < 4) return 0;
+        var similarity = Similarity(word, token);
+        var allowed = word.Length >= 8 ? 2 : 1;
+        return OptimalStringAlignment(word, token) <= allowed ? similarity : 0;
+    }
+
+    private static double Similarity(string left, string right)
+        => 1d - (double)OptimalStringAlignment(left, right) / Math.Max(left.Length, right.Length);
+
+    // Edit distance counting a swapped letter pair ("grils" -> "girls") as one typo.
+    private static int OptimalStringAlignment(string left, string right)
+    {
+        var d = new int[left.Length + 1, right.Length + 1];
+        for (var i = 0; i <= left.Length; i++) d[i, 0] = i;
+        for (var j = 0; j <= right.Length; j++) d[0, j] = j;
+        for (var i = 1; i <= left.Length; i++)
+            for (var j = 1; j <= right.Length; j++)
+            {
+                var cost = left[i - 1] == right[j - 1] ? 0 : 1;
+                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+                if (i > 1 && j > 1 && left[i - 1] == right[j - 2] && left[i - 2] == right[j - 1])
+                    d[i, j] = Math.Min(d[i, j], d[i - 2, j - 2] + 1);
+            }
+        return d[left.Length, right.Length];
+    }
+
+    private const double StrongMatch = 0.75;
+    private const double KeepMatch = 0.6;
+
     internal static JsonElement Filter(JsonElement response, string query, string? category, AniWorldSiteInfo? source = null)
     {
         var key = response.ValueKind == JsonValueKind.Object && response.TryGetProperty("items", out _) ? "items" : "results";
@@ -147,13 +231,16 @@ internal static class SearchRelevance
                 var normalized = kind.ValueKind == JsonValueKind.String ? MediaCategories.Normalize(kind.GetString()) : null;
                 return normalized is null || MediaCategories.Matches(category, normalized);
             })
-            .Select(item =>
-            {
-                var fields = item.EnumerateObject().ToDictionary(property => property.Name, property => (object)property.Value);
-                // The downloader knows aliases, editions and source-specific ranking.
-                // A locally computed score must not hide, merge or reorder its hits.
-                return fields;
-            }).ToArray();
+            .ToArray();
+        // When the source returned at least one title that really matches (typos allowed),
+        // unrelated filler such as every title containing "2" is dropped and the best
+        // matches come first. Without any matching title the source's own hits stay
+        // untouched: they usually match a localized title the response does not carry.
+        var scored = filtered.Select((item, index) => (Item: item, Index: index, Score: Relevance(item, query))).ToArray();
+        if (scored.Any(entry => entry.Score >= StrongMatch))
+            filtered = scored.Where(entry => entry.Score >= KeepMatch)
+                .OrderByDescending(entry => entry.Score).ThenBy(entry => entry.Index)
+                .Select(entry => entry.Item).ToArray();
         return JsonSerializer.SerializeToElement(new { results = filtered });
     }
 }
