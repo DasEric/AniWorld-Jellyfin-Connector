@@ -59,10 +59,8 @@ public sealed partial class AniWorldRequestApplicationService
             {
                 return await ReadProviderOptionsAsync(userId, request.Source, target.Episode.Url, cancellationToken, refreshOffers).ConfigureAwait(false);
             }
-            catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException)
-            {
-                return (IReadOnlyDictionary<string, IReadOnlyList<string>>)new Dictionary<string, IReadOnlyList<string>>();
-            }
+            // An upstream error is not proof that an episode has no matching language.
+            // Fail preparation so the durable worker retries instead of silently omitting it.
             finally { concurrency.Release(); }
         })).ConfigureAwait(false);
         var languages = offers.SelectMany(offer => offer.Keys).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
@@ -83,7 +81,7 @@ public sealed partial class AniWorldRequestApplicationService
                 if (!localByIdentity.TryGetValue(localKey, out var local))
                 {
                     local = target.Identity.Title.Length == 0 ? new LibraryAvailability(false, new HashSet<LibraryEpisodeKey>())
-                        : _libraryAvailability.GetAvailability(target.Identity, language);
+                        : _libraryAvailability.GetAvailability(target.Identity, language, request.SubtitleLanguage);
                     localByIdentity[localKey] = local;
                 }
                 var exists = target.IsMovie ? local.ItemExists : local.Episodes.Contains(new LibraryEpisodeKey(target.Episode.SeasonNumber!.Value, target.Episode.EpisodeNumber!.Value));

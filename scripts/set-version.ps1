@@ -32,9 +32,7 @@ function Update-ExactText([string]$RelativePath, [string]$OldText, [string]$NewT
 Update-ExactText "Jellyfin.Plugin.AniWorld\Jellyfin.Plugin.AniWorld.csproj" $oldFourPart $newFourPart
 Update-ExactText "Jellyfin.Plugin.AniWorld\Jellyfin.Plugin.AniWorld.csproj" "<InformationalVersion>$oldVersion</InformationalVersion>" "<InformationalVersion>$Version</InformationalVersion>"
 Update-ExactText "Jellyfin.Plugin.AniWorld\meta.json" ('"version": "' + $oldFourPart + '"') ('"version": "' + $newFourPart + '"')
-Update-ExactText "Jellyfin.Plugin.AniWorld\meta.json" ("v$oldVersion\n") ("v$Version\n")
-Update-ExactText "Jellyfin.Plugin.AniWorld\PluginServiceRegistrator.cs" "Jellyfin-MediaForge-Requests/$oldVersion" "Jellyfin-MediaForge-Requests/$Version"
-Update-ExactText "MediaForge.Module\mediaforge_jellyfin_connector\__init__.py" ('MODULE_VERSION = "' + $oldVersion + '"') ('MODULE_VERSION = "' + $Version + '"')
+Update-ExactText "Jellyfin.Plugin.AniWorld\PluginServiceRegistrator.cs" "Jellyfin-AniWorld-Requests/$oldVersion" "Jellyfin-AniWorld-Requests/$Version"
 $versionInfo.version = $Version
 $versionInfo.versionFourPart = $newFourPart
 $json = @"

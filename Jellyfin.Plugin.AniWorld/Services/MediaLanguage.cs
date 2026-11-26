@@ -12,7 +12,7 @@ internal static class MediaLanguage
         _ => string.Empty,
     };
 
-    internal static bool Matches(IEnumerable<MediaStream> streams, string variant)
+    internal static bool Matches(IEnumerable<MediaStream> streams, string variant, string subtitleLanguage = "none")
     {
         var (audio, subtitles) = variant.ToLowerInvariant() switch
         {
@@ -25,6 +25,7 @@ internal static class MediaLanguage
         };
         var values = streams.ToArray();
         return audio.Length > 0 && values.Any(s => s.Type == MediaStreamType.Audio && Normalize(s.Language) == audio)
-            && (subtitles.Length == 0 || values.Any(s => s.Type is MediaStreamType.Subtitle or MediaStreamType.Video && Normalize(s.Language) == subtitles));
+            && (subtitles.Length == 0 || values.Any(s => s.Type is MediaStreamType.Subtitle or MediaStreamType.Video && Normalize(s.Language) == subtitles))
+            && (subtitleLanguage == "none" || values.Any(s => s.Type == MediaStreamType.Subtitle && Normalize(s.Language) == subtitleLanguage));
     }
 }

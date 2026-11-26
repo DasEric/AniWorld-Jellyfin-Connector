@@ -18,13 +18,12 @@ public static class AniWorldSiteRegistry
     [
         new("aniworld",       "AniWorld",       ["movie", "series"], BrowsePaths: ["api/new-animes", "api/popular-animes"]),
         new("sto",            "Serienstream",   ["series"], BrowsePaths: ["api/new-series", "api/popular-series"]),
-        new("kinox",          "Kinox",          ["movie", "series"], BrowsePaths: ["api/kinox-movies"]),
-        new("burningseries",  "BurningSeries",  ["series"], BrowsePaths: ["api/burningseries-series"]),
         new("megakino",       "MegaKino",       ["movie", "series"], BrowsePaths: ["api/popular-movies"]),
-        new("cineby",         "Cineby",         ["movie", "series"], BrowsePaths: ["api/cineby-movies"]),
-        new("filmpalast",     "FilmPalast",     ["movie"], BrowsePaths: ["api/filmpalast-movies"]),
-        new("filmo",          "Filmo",          ["movie"], BrowsePaths: ["api/filmo-movies"]),
+        new("filmpalast",     "FilmPalast",     ["movie", "series"], BrowsePaths: ["api/filmpalast-movies"]),
+        new("filmo",          "Filmo",          ["movie", "series"], BrowsePaths: ["api/filmo-movies"]),
         new("moflix",         "Moflix",         ["movie", "series"], BrowsePaths: ["api/moflix-movies"]),
+        new("zdf",            "ZDF",            ["movie", "series"], BrowsePaths: ["api/zdf-preview"]),
+        new("dmax",           "DMAX",           ["movie", "series"], BrowsePaths: ["api/dmax-preview"]),
         new("mangafire",      "MangaFire",      ["manga"], BrowsePaths: ["api/mangafire-trending"]),
         new("htv",            "HanimeTV",       ["series"], BrowsePaths: ["api/htv-trending"]),
     ];

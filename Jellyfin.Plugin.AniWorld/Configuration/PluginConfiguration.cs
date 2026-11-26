@@ -52,7 +52,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets the maximum number of open requests per user.</summary>
     public int MaxPendingRequestsPerUser { get; set; } = 10;
 
-    /// <summary>Gets or sets an optional comma-separated site allowlist (e.g. aniworld,sto,kinox).</summary>
+    /// <summary>Gets or sets an optional comma-separated site allowlist (e.g. aniworld,sto,megakino).</summary>
     public string AllowedSources { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the initial language in the request dialog.</summary>

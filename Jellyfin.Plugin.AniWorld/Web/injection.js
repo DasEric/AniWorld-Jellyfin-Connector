@@ -110,8 +110,14 @@
     if (event.key !== 'Escape') return;
     const overlay = getOverlay();
     if (!overlay) return;
+    // Close the innermost open dialog first. The dialogs are hidden by CSS until
+    // they are opened, so only an explicit inline "flex" means "open".
+    const deletion = overlay.querySelector('[data-mf="delete-overlay"]');
     const detail = overlay.querySelector('[data-mf="overlay"]');
-    if (detail && detail.style.display !== 'none') {
+    if (deletion && deletion.style.display === 'flex') {
+      const deletionCancel = overlay.querySelector('[data-mf="delete-cancel"]');
+      if (deletionCancel) deletionCancel.click();
+    } else if (detail && detail.style.display === 'flex') {
       const detailClose = overlay.querySelector('[data-mf="close"]');
       if (detailClose) detailClose.click();
     } else {

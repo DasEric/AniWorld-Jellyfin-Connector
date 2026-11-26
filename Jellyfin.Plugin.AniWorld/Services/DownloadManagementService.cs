@@ -34,11 +34,13 @@ public sealed class DownloadManagementService
         return intents.GroupBy(entry => (entry.OwnerId, entry.Source, entry.SeriesUrl)).Select(group =>
         {
             var keys = group.Select(entry => entry.RequestKey).ToHashSet(StringComparer.Ordinal);
+            var subtitles = group.ToDictionary(entry => entry.RequestKey, entry => entry.SubtitleLanguage);
             var artifacts = files.Where(file => keys.Contains(file.RequestKey) && file.State != "deleted").ToArray();
             return new { id = group.First().RequestKey, title = group.First().Title, mediaType = group.First().MediaType,
                 ownerId = admin ? group.Key.OwnerId : null,
                 files = artifacts.Select(file => new { id = file.Id, name = file.Name, language = file.Language, state = file.State,
-                    size = file.Size, mediaType = file.MediaType, streams = file.Streams, verification = file.Verification }).ToArray(),
+                    size = file.Size, mediaType = file.MediaType, streams = file.Streams, verification = file.Verification,
+                    subtitleLanguage = subtitles[file.RequestKey], subtitleVerification = file.VerifySubtitle(subtitles[file.RequestKey]) }).ToArray(),
                 canDelete = artifacts.Any(file => file.State is "owned" or "missing") };
         }).Where(group => group.files.Length > 0).ToArray();
     }

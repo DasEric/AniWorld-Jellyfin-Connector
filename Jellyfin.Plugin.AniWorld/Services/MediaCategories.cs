@@ -56,7 +56,7 @@ public static class MediaCategories
         .Where(group => group.media_types.Count > 0).Cast<object>().ToArray();
 }
 
-/// <summary>All meaningful words must match a title/alias or a catalog author.</summary>
+/// <summary>Preserves upstream search results while enforcing the requested category.</summary>
 internal static class SearchRelevance
 {
     private static readonly HashSet<string> StopWords = ["the", "a", "an", "der", "die", "das", "ein", "eine", "film", "movie", "serie", "series"];
@@ -136,28 +136,22 @@ internal static class SearchRelevance
             fields["source"] = source.Id;
             return JsonSerializer.SerializeToElement(fields);
         }
-        var seen = new HashSet<string>(StringComparer.Ordinal);
         var filtered = items.EnumerateArray()
             .Select(NormalizeItem).Where(item => item.HasValue).Select(item => item!.Value)
-            .Select(item => (Item: item, Score: Score(item, query)))
-            .Where(entry => entry.Score > 0)
-            .Where(entry =>
+            .Where(item =>
             {
                 if (category is null) return true;
-                if (!entry.Item.TryGetProperty("media_type", out var kind) && !entry.Item.TryGetProperty("media_kind", out kind)) return true;
+                if (!item.TryGetProperty("media_type", out var kind) && !item.TryGetProperty("media_kind", out kind)) return true;
                 // Legacy responses may omit the concrete type. A grouped video
                 // search does not need a detail request for every result.
                 var normalized = kind.ValueKind == JsonValueKind.String ? MediaCategories.Normalize(kind.GetString()) : null;
                 return normalized is null || MediaCategories.Matches(category, normalized);
             })
-            .OrderByDescending(entry => entry.Score)
-            .ThenBy(entry => entry.Item.TryGetProperty("title", out var title) ? title.ToString() : string.Empty, StringComparer.OrdinalIgnoreCase)
-            .Where(entry => seen.Add(entry.Item.TryGetProperty("url", out var url) ? url.ToString() : entry.Item.TryGetProperty("id", out var id) ? id.ToString() : entry.Item.GetRawText()))
-            .Take(100)
-            .Select(entry =>
+            .Select(item =>
             {
-                var fields = entry.Item.EnumerateObject().ToDictionary(property => property.Name, property => (object)property.Value);
-                fields["relevance"] = entry.Score;
+                var fields = item.EnumerateObject().ToDictionary(property => property.Name, property => (object)property.Value);
+                // The downloader knows aliases, editions and source-specific ranking.
+                // A locally computed score must not hide, merge or reorder its hits.
                 return fields;
             }).ToArray();
         return JsonSerializer.SerializeToElement(new { results = filtered });

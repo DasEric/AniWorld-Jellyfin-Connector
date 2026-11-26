@@ -5,7 +5,7 @@ Search your enabled H0melab Downloader sources and request films, series and man
 ## Requirements
 
 - Jellyfin **12** and the Jellyfin Web client.
-- [H0melab Downloader](https://github.com/DasEric/H0melab-Downloader-V2) **2.3.0 or newer**, including grouped series and shared media destinations.
+- [H0melab Downloader](https://github.com/DasEric/H0melab-Downloader-V2) **2.5.0 or newer**, including grouped series and shared media destinations. Version 2.4.0 removed the connector interface and is not supported.
 - A downloader API key with **administrator / full access**.
 - The Jellyfin server must reach the downloader. Downloaded films and series must be accessible through the corresponding Jellyfin library folders.
 
@@ -29,7 +29,7 @@ Use an address reachable **from the Jellyfin server**, not only from your browse
 
 ## Choose movie and series destinations
 
-Create your movie and series mount points / custom download paths in H0melab Downloader first. Under **Settings → Custom Paths → Movie and show destinations**, choose the two separate, non-overlapping mounts. Add the same storage folders to Jellyfin libraries of type **Movies** and **Shows**.
+Create your movie and series mount points / custom download paths in H0melab Downloader first. Under **Settings → Custom Paths → Movie and show destinations**, choose the two separate, non-overlapping mounts. Add the same storage folders to Jellyfin libraries of type **Movies** and **Shows**. Film and series requests are refused until both destinations exist. This way a series from a movie site such as MegaKino never lands in the movie folder, because the detected content type always picks the folder.
 
 In the plugin settings:
 
@@ -97,7 +97,7 @@ The optional Jellix integration uses the connector's existing settings and appro
 | Problem | Check |
 | --- | --- |
 | Connection or source-list error | Downloader URL, server-to-server connectivity and a full-access API key. |
-| File-receipt / protocol error | Update the downloader to the matching 2.3.0-or-newer build, then restart Jellyfin. |
+| File-receipt / protocol error | Update the downloader to 2.5.0 or newer, then restart Jellyfin. |
 | Mount verification fails | Both selected paths must reference the same storage; check mounts and read/write permissions. |
 | Download finished but missing in Jellyfin | Correct library mapping, readable media files and the movie/show scan task in **Dashboard → Scheduled Tasks**. |
 | A language is only partly available | Review the per-language coverage and explicitly confirm a partial request if desired. |

@@ -56,8 +56,7 @@ public sealed partial class AniWorldRequestApplicationService
 
     public async Task<SubmitMediaRequestResult> SubmitCatalogAsync(string userId, string username, CatalogMediaRequest selection, CancellationToken cancellationToken)
     {
-        if (CurrentConfiguration.MaintenanceMode)
-            throw new AniWorldApplicationException(HttpStatusCode.ServiceUnavailable, "Neue Anfragen sind vorübergehend deaktiviert.");
+        if (CurrentConfiguration.MaintenanceMode) throw MaintenanceActive(CurrentConfiguration);
         if (!Allow(userId, "request", 10)) throw TooManyRequests();
         if (selection.AssetId.Length is < 1 or > 2048 || selection.AssetId.Any(char.IsControl))
             throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Bitte eine gültige Katalogdatei auswählen.");
@@ -72,14 +71,12 @@ public sealed partial class AniWorldRequestApplicationService
             CatalogItemId = detail.Id, CatalogAssetId = asset.Id, Format = asset.Extension,
             SelectionLabel = MediaCategories.Labels[detail.MediaKind] + " · " + asset.Extension.ToUpperInvariant(),
             Language = detail.Language, Provider = "catalog:" + detail.Source,
-        }, RequestStatuses.Pending, limit, cancellationToken).ConfigureAwait(false);
+        }, CurrentConfiguration.AutoApproveRequests ? RequestStatuses.Ready : RequestStatuses.Pending, limit, cancellationToken).ConfigureAwait(false);
         if (result.Duplicate is not null) return new SubmitMediaRequestResult(SubmitDisposition.Duplicate, null, result.Duplicate, limit);
         if (result.LimitReached) return new SubmitMediaRequestResult(SubmitDisposition.LimitReached, null, null, limit);
         if (result.StoreCapacityReached) return new SubmitMediaRequestResult(SubmitDisposition.StoreCapacityReached, null, null, limit);
         var stored = result.Request ?? throw new InvalidOperationException("Catalog request was not stored.");
-        if (!CurrentConfiguration.AutoApproveRequests) return new SubmitMediaRequestResult(SubmitDisposition.Stored, stored, null, limit);
-        var queued = await QueueRequestAsync(stored.Id, "automatic", cancellationToken).ConfigureAwait(false);
-        return new SubmitMediaRequestResult(queued.Status is RequestStatuses.Queued or RequestStatuses.Completed ? SubmitDisposition.Queued : SubmitDisposition.QueueFailed, queued, null, limit);
+        return new SubmitMediaRequestResult(SubmitDisposition.Stored, stored, null, limit);
     }
 
     private async Task<MediaRequest> QueueCatalogRequestAsync(MediaRequest request, string decidedBy, CancellationToken cancellationToken)

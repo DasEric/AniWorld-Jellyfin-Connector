@@ -28,12 +28,13 @@ public sealed class DownloadOwnershipStore
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            var intent = new DownloadIntent(request.SubmissionKey, request.UserId, instanceId, request.SeriesUrl, request.Source, request.Title, request.MediaType);
+            var intent = new DownloadIntent(request.SubmissionKey, request.UserId, instanceId, request.SeriesUrl, request.Source, request.Title, request.MediaType)
+                { SubtitleLanguage = request.SubtitleLanguage };
             var old = _entries.SingleOrDefault(entry => entry.RequestKey == request.SubmissionKey);
             if (old is not null)
             {
                 if (old.OwnerId != intent.OwnerId || old.InstanceId != intent.InstanceId || old.SeriesUrl != intent.SeriesUrl
-                    || old.Source != intent.Source || old.MediaType != intent.MediaType)
+                    || old.Source != intent.Source || old.MediaType != intent.MediaType || old.SubtitleLanguage != intent.SubtitleLanguage)
                     throw new AniWorldApplicationException(System.Net.HttpStatusCode.Conflict, "Eine Downloadidentität darf nicht auf einen anderen Benutzer oder Downloader übertragen werden.");
                 return;
             }
@@ -59,4 +60,7 @@ public sealed class DownloadOwnershipStore
     }
 }
 
-public sealed record DownloadIntent(string RequestKey, string OwnerId, string InstanceId, string SeriesUrl, string Source, string Title, string MediaType);
+public sealed record DownloadIntent(string RequestKey, string OwnerId, string InstanceId, string SeriesUrl, string Source, string Title, string MediaType)
+{
+    public string SubtitleLanguage { get; init; } = "none";
+}

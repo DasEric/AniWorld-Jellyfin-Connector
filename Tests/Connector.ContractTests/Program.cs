@@ -10,23 +10,35 @@ if (args.Contains("--serve-http-contract", StringComparer.Ordinal))
 
 var tests = new (string Name, Action Run)[]
 {
+    ("subtitle defaults and source validation preserve legacy requests", SubtitleScenarios.DefaultsAndValidation),
+    ("subtitle selection survives persistence, duplicate detection and queue payload", SubtitleScenarios.PersistAndSendSelectedSubtitles),
+    ("requested soft subtitles are not audio or burned-in video", SubtitleScenarios.RequestedSoftSubtitlesAreNotAudioOrBurnedInVideo),
+    ("admission persists full-series intent without remote calls", BackgroundRequestScenarios.AdmissionIsDurableWithoutRemoteCalls),
+    ("approval gate and concurrent workers prevent duplicate downloads", BackgroundRequestScenarios.ApprovalGateAndDuplicateAdmission),
+    ("upstream errors remain retryable errors, not missing languages", BackgroundRequestScenarios.UpstreamErrorsDoNotBecomeMissingLanguages),
+    ("interrupted preparation resumes after restart", BackgroundRequestScenarios.InterruptedPreparationResumesAfterRestart),
+    ("prepared payload and idempotency key survive restart", BackgroundRequestScenarios.PreparedPayloadAndKeySurviveRestart),
+    ("maintenance and revoked sources prevent background downloads", BackgroundRequestScenarios.MaintenanceAndRevokedSourcePreventDownload),
+    ("retry budget and graceful shutdown recovery are durable", BackgroundRequestScenarios.RetryBudgetAndShutdownRecovery),
     ("central destinations override site defaults without a local override", MediaLifecycleScenarios.CentralDestinationsWorkWithoutLocalOverride),
     ("conflicting central destinations are never overridden", MediaLifecycleScenarios.ConflictingCentralDestinationsAreNotOverridden),
     ("grouped show references and destination wire fields survive serialization", MediaLifecycleScenarios.MediaDestinationWireFieldsAreExplicit),
     ("typed client construction and movie-only follow-up scans are correct", MediaLifecycleScenarios.TypedClientConstructionIsUnambiguous),
     ("file receipts report actual audio mismatch and unknown tags", MediaLifecycleScenarios.ReceiptsReportActualLanguageInsteadOfRequestedLabel),
     ("all episode offers contribute language coverage", MediaLifecycleScenarios.LanguagesCoverAllEpisodes),
-    ("partial language coverage needs explicit consent", MediaLifecycleScenarios.PartialSelectionRequiresConsent),
+    ("full-series intent downloads available language episodes and remains partial", MediaLifecycleScenarios.PartialSelectionDownloadsAvailableAndRemainsPartial),
     ("providers are verified per episode", MediaLifecycleScenarios.ProviderNeverComesFromOnlyTheFirstEpisode),
     ("missing languages never silently fall back", MediaLifecycleScenarios.NoInventedLanguageOrJellixFallback),
     ("audio and subtitle streams are not interchangeable", MediaLifecycleScenarios.AudioAndSubtitlesAreDifferent),
     ("different language requests are not duplicates", MediaLifecycleScenarios.DifferentLanguagesAreNotDuplicateRequests),
     ("series route overrides a movie source default", MediaLifecycleScenarios.SeriesRoutingOverridesMovieSiteDefault),
+    ("missing central destinations never use a site default", MediaLifecycleScenarios.MissingCentralDestinationsNeverUseASiteDefault),
     ("mixed franchises route movies and series separately", MediaLifecycleScenarios.MixedMoviesAndSeriesKeepTheirOwnTargets),
     ("missing mount never falls back", MediaLifecycleScenarios.MissingMountNeverFallsBack),
     ("ownership survives history and restart", MediaLifecycleScenarios.OwnershipPersistsWithoutRequestHistory),
     ("deletion rechecks owner and includes only own series files", MediaLifecycleScenarios.DeletionChecksUserAgainAndIncludesOwnSeriesOnly),
     ("mount validation checks a real shared file", MediaLifecycleScenarios.SharedMountProbeChecksActualFile),
+    ("saved destinations are used immediately", MediaLifecycleScenarios.SavedDestinationsAreUsedImmediately),
     ("Jellix selection follows current connector approval or direct-download policy", CatalogScenarios.JellixSelectionUsesCurrentConnectorPolicy),
     ("Jellix selection rechecks maintenance sources and user ownership", CatalogScenarios.JellixSelectionRechecksMaintenanceAndSourcePolicy),
     ("real HTTP/MVC discovery search and partial failures use Jellyfin defaults", HttpContractScenarios.RealJellyfinWireContract),
@@ -40,7 +52,8 @@ var tests = new (string Name, Action Run)[]
     ("catalog group uses only allowed concrete kinds", CatalogScenarios.CatalogGroupUsesOnlyAllowedKinds),
     ("manga plan tokens retain their concrete request type", CatalogScenarios.MangaPlanRetainsConcreteType),
     ("MegaKino fork episode selectors remain distinct", CatalogScenarios.MegaKinoSelectorsStayDistinct),
-    ("Gravity Falls rejects unrelated partial matches", CatalogScenarios.GravityFallsRelevance),
+    ("downloader search results are authoritative", CatalogScenarios.DownloaderSearchResultsAreAuthoritative),
+    ("search preserves more than 100 results, upstream order and shared-URL editions", CatalogScenarios.SearchPreservesLargeListsAndEditions),
     ("aliases years authors and editions remain distinct", CatalogScenarios.AliasesYearsAndEditions),
     ("MangaFire is manga, not series", CatalogScenarios.MangaIsNotSeries),
     ("source capabilities obey category policy and allowlist", CatalogScenarios.CapabilityPolicy),
@@ -59,12 +72,13 @@ var tests = new (string Name, Action Run)[]
     ("extended queue entries round-trip", ExtendedQueueEntriesRoundTrip),
     ("fork sources are registered", ForkSourcesAreRegistered),
     ("only enabled AniWorld sources are exposed", OnlyEnabledSourcesAreExposed),
+    ("every enabled downloader source is offered, including new ones", EveryEnabledDownloaderSourceIsOffered),
     ("site default path is selected", SiteDefaultPathIsSelected),
     ("unrelated site path is not selected", UnrelatedSitePathIsNotSelected),
     ("invalid path response is rejected", InvalidPathResponseIsRejected),
     ("queue sends the site default path ID", QueueSendsSiteDefaultPathId),
     ("completed queues request a library scan", CompletedQueueRequestsScan),
-    ("partial queues do not request a library scan", PartialQueueDoesNotRequestScan),
+    ("partial queues scan successfully downloaded episodes", PartialQueueRequestsScan),
     ("completed queue with failed episodes is partial", CompletedQueueWithErrorsIsPartial),
     ("pending library scan survives a restart", PendingLibraryScanSurvivesRestart),
     ("legacy virtual-folder scans are retried once", LegacyVirtualFolderScansAreRetriedOnce),
@@ -182,6 +196,26 @@ static void OnlyEnabledSourcesAreExposed()
     True(enabled.Select(source => source.Id).SequenceEqual(["aniworld", "moflix"]));
 }
 
+static void EveryEnabledDownloaderSourceIsOffered()
+{
+    // Shape of GET /api/sources and /api/settings from H0melab Downloader 2.5.0.
+    string[] ids = ["aniworld", "sto", "megakino", "moflix", "filmpalast", "filmo", "zdf", "dmax", "htv", "mangafire"];
+    string[] disabled = ["htv", "filmo"];
+    var sources = ids.Select(id => new
+    {
+        id, label = id.ToUpperInvariant(), backend = "video", enabled = !disabled.Contains(id),
+        media_types = id == "mangafire" ? new[] { "manga" } : id == "sto" || id == "htv" ? new[] { "series" } : new[] { "movie", "series" },
+        browse_paths = new[] { $"api/{id}-preview" },
+    });
+    var metadata = JsonSerializer.SerializeToElement(new { schema_version = 1, sources });
+    var settings = new Dictionary<string, object> { ["available_sites"] = ids.Select(id => new { key = id }).ToArray() };
+    foreach (var id in ids) settings[$"enable_{id}"] = !disabled.Contains(id);
+    var offered = AniWorldRequestApplicationService.ReadSourceCapabilities(
+        JsonSerializer.SerializeToElement(settings), metadata,
+        new Jellyfin.Plugin.AniWorld.Configuration.PluginConfiguration());
+    True(offered.Select(source => source.Id).SequenceEqual(ids.Except(disabled)));
+}
+
 static void SiteDefaultPathIsSelected()
 {
     using var document = JsonDocument.Parse(
@@ -245,7 +279,7 @@ static void CompletedQueueRequestsScan()
     });
 }
 
-static void PartialQueueDoesNotRequestScan()
+static void PartialQueueRequestsScan()
 {
     WithRequestStore(async store =>
     {
@@ -253,7 +287,7 @@ static void PartialQueueDoesNotRequestScan()
         await store.SyncQueueStatesAsync(
             "user",
             new Dictionary<long, string> { [43] = "partial" }, CancellationToken.None);
-        Equal(0, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
+        Equal(1, (await store.ListPendingLibraryScansAsync(CancellationToken.None)).Count);
         Equal(RequestStatuses.Partial, (await store.GetAsync(requestId, CancellationToken.None))?.Status);
     });
 }

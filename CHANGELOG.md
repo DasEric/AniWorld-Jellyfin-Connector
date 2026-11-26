@@ -1,5 +1,18 @@
 # Änderungen
 
+## 2.0.0
+
+- **Voraussetzungen:** Jellyfin 12.4 (`targetAbi` 12.4.0.0, gebaut gegen Jellyfin 12.4.0) und H0melab Downloader 2.5.0. Zuerst den Downloader aktualisieren, dann den Connector installieren. Downloader 2.4.0 wird nicht unterstützt.
+- **Anfragen im Hintergrund:** Eine Anfrage wird sofort dauerhaft gespeichert und bestätigt („XXXX wurde erfolgreich angefragt.“). Vorbereitung und Übergabe übernimmt ein Hintergrunddienst mit Wiederaufnahme nach Neustarts, begrenzten Wiederholungen und Schutz vor Doppelaufträgen. Man kann sofort weitersuchen.
+- **Komplette Serien:** Eine Serienanfrage ergänzt alle verfügbaren fehlenden Folgen in der gewählten Audiosprache. Vorhandene Folgen zählen nur in dieser Sprache. Fehlende Sprachversionen bleiben sichtbar offen („teilweise erfüllt“). Technische Quellenfehler gelten nicht als fehlende Sprache.
+- **Zielordner:** Filme und Serien gehen immer an die getrennten Film-/Serienziele des Downloaders. Der Inhaltstyp entscheidet, nicht die Quelle. Eine MegaKino-Serie landet damit im Serienordner. Ohne eingerichtete Ziele wird nichts übergeben, statt einen Ordner zu raten.
+- **Quellen:** Alle im Downloader verfügbaren und aktivierten Quellen erscheinen, auch ZDF und DMAX. Entfernte Quellen (Kinox, BurningSeries, Cineby) sind nicht mehr enthalten. FilmPalast und Filmo können Filme und Serien liefern.
+- **Suche:** Alle Treffer des Downloaders in seiner Reihenfolge, ohne zusätzliche Titelfilter oder 100er-Grenze. Fehler einer Quelle verdrängen die übrigen Ergebnisse nicht.
+- **Untertitel:** Für SerienStream und ZDF optional deutsche Untertitel als Spur in der Datei; Standard sind keine Untertitel.
+- **Oberfläche:** H0melab-Design für Suche, Anfragedialog, „Meine Anfragen“ und Verwaltung, auch mobil. Bestätigungen als Toast, Bestandsübersicht als Kennzahlen, Escape schließt Dialoge.
+- **Wartungsmodus:** Großes Banner auf der Seite und im Anfragedialog. Anfragen, Freigaben und Übergaben sind gesperrt, solange er aktiv ist.
+- **Korrekturen:** Nach dem Speichern der Plugin-Einstellungen werden die neuen Ziele sofort verwendet. Escape schließt nur noch den innersten Dialog.
+
 ## 1.5.0
 
 - Übernimmt stabile Serientreffer aus einzelnen Episodenseiten des Downloaders, ohne künstliche Anbieter-URLs einzuführen. FilmPalast/Filmo können Filme und Serien liefern.

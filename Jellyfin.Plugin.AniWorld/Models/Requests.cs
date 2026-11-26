@@ -5,6 +5,11 @@ namespace Jellyfin.Plugin.AniWorld.Models;
 /// <summary>Payload, mit dem ein Jellyfin-Benutzer Inhalte anfordert.</summary>
 public sealed class CreateMediaRequest
 {
+    [MaxLength(4)]
+    public string SubtitleLanguage { get; set; } = "none";
+    public bool FullSeries { get; set; }
+    public string? ExpectedMediaType { get; set; }
+    public bool AllowProviderFallback { get; set; }
     public string Backend { get; set; } = "video";
     public string CatalogItemId { get; set; } = string.Empty;
     public string CatalogAssetId { get; set; } = string.Empty;
@@ -41,6 +46,8 @@ public sealed class CreateMediaRequest
 /// <summary>Payload für eine server-berechnete Anfrage mit nur fehlenden Inhalten.</summary>
 public sealed class AutomaticMediaRequest
 {
+    [MaxLength(4)]
+    public string SubtitleLanguage { get; set; } = "none";
     public bool AllowPartial { get; set; }
     [MaxLength(128)]
     public string PlanToken { get; set; } = string.Empty;

@@ -5,8 +5,8 @@
   "overview": "Search enabled sources, request the right language, route films and series to separate libraries, and manage your own downloads.",
   "owner": "Eric",
   "category": "General",
-  "version": "1.5.0.0",
-  "targetAbi": "12.0.0.0",
+  "version": "2.0.0.0",
+  "targetAbi": "12.4.0.0",
   "framework": "net10.0",
-  "changelog": "Grouped episode-page series with stable provider references; central movie/show destinations shared with the downloader; standardized season/episode paths; resumable large series requests. Preserves language checks and owner-checked deletion. Requires H0melab Downloader 2.3.0 or newer."
+  "changelog": "Requires Jellyfin 12.4 and H0melab Downloader 2.5.0. Requests are saved instantly and prepared in the background; full series fill every missing episode in the chosen language. Movies and series always go to the downloader's separate movie/show destinations. SerienStream and ZDF subtitles, all enabled downloader sources (including ZDF and DMAX), H0melab design and a prominent maintenance banner."
 }

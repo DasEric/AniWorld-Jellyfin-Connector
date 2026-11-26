@@ -85,6 +85,14 @@ public sealed partial class AniWorldClient
         finally { _metadataLock.Release(); }
     }
 
+    /// <summary>Drops cached metadata after this client changed it in the downloader.</summary>
+    private async Task InvalidateMetadataAsync(string path)
+    {
+        await _metadataLock.WaitAsync().ConfigureAwait(false);
+        try { _metadata.Remove(path); }
+        finally { _metadataLock.Release(); }
+    }
+
     /// <summary>Lädt die benutzerdefinierten Pfade samt Standardquellen.</summary>
     public Task<JsonElement> GetCustomPathsAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/custom-paths", null, cancellationToken);
@@ -216,17 +224,8 @@ public sealed partial class AniWorldClient
     public Task<JsonElement> GetPopularSeriesAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/popular-series", null, cancellationToken);
 
-    public Task<JsonElement> GetKinoxMoviesAsync(CancellationToken cancellationToken)
-        => SendAsync(HttpMethod.Get, "api/kinox-movies", null, cancellationToken);
-
     public Task<JsonElement> GetFilmpalastMoviesAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/filmpalast-movies", null, cancellationToken);
-
-    public Task<JsonElement> GetCinebyMoviesAsync(CancellationToken cancellationToken)
-        => SendAsync(HttpMethod.Get, "api/cineby-movies", null, cancellationToken);
-
-    public Task<JsonElement> GetBurningSeriesAsync(CancellationToken cancellationToken)
-        => SendAsync(HttpMethod.Get, "api/burningseries-series", null, cancellationToken);
 
     public Task<JsonElement> GetHtvTrendingAsync(CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Get, "api/htv-trending", null, cancellationToken);
@@ -314,14 +313,18 @@ public sealed partial class AniWorldClient
             var capabilities = await GetConnectorCapabilitiesAsync(cancellationToken).ConfigureAwait(false);
             if (request.Episodes.Count > capabilities.MaxEntries)
                 throw new AniWorldException(HttpStatusCode.Conflict, "Die Auswahl überschreitet die vom Downloader bestätigte Auftragsgröße. Bitte den Downloader aktualisieren oder eine kleinere Auswahl treffen.");
+            var central = capabilities.MediaTargets;
+            // The content type decides the folder. A site's default path (e.g. MegaKino → movies)
+            // must never receive a detected show, so typed requests need central destinations.
+            if (central?.Enabled != true || central.Movie is null || central.Series is null)
+                throw new AniWorldException(HttpStatusCode.Conflict, "Im H0melab Downloader sind keine getrennten Film- und Serienziele eingerichtet. Bitte dort unter Einstellungen die Medienziele festlegen oder in den Plugin-Einstellungen die Mount-/Bibliothekszuordnung speichern.");
             var items = new List<AniWorldDownloadItem>();
             foreach (var item in request.Episodes)
             {
-                var central = capabilities.MediaTargets;
                 var pathId = _configuration()?.EnableMediaRouting == true
                     ? (_routing ?? throw new AniWorldException(HttpStatusCode.ServiceUnavailable, "Die Zielzuordnung ist nicht verfügbar.")).Resolve(item.MediaType!, capabilities.Paths)
-                    : central?.Enabled == true ? (item.MediaType == "movie" ? central.Movie : central.Series) : customPathId;
-                if (central?.Enabled == true && pathId != (item.MediaType == "movie" ? central.Movie : central.Series))
+                    : item.MediaType == "movie" ? central.Movie : central.Series;
+                if (pathId != (item.MediaType == "movie" ? central.Movie : central.Series))
                     throw new AniWorldException(HttpStatusCode.Conflict, "Die Medienziele wurden im Downloader geändert. Bitte die Mount-/Bibliothekszuordnung neu laden und prüfen.");
                 var root = capabilities.Paths.SingleOrDefault(path => path.Id == pathId)
                     ?? throw new AniWorldException(HttpStatusCode.Conflict, "Das Downloadziel existiert nicht mehr.");
@@ -426,6 +429,7 @@ public sealed partial class AniWorldClient
         {
             episodes = request.Episodes,
             language = request.Language,
+            subtitle_language = request.SubtitleLanguage,
             provider = request.Provider,
             title = request.Title,
             series_url = request.SeriesUrl,

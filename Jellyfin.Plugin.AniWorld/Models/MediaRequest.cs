@@ -6,6 +6,20 @@ namespace Jellyfin.Plugin.AniWorld.Models;
 /// <summary>Persistente Benutzeranfrage und das zugehörige AniWorld-Queue-Ergebnis.</summary>
 public sealed class MediaRequest
 {
+    [JsonPropertyName("fullSeries")]
+    public bool FullSeries { get; set; }
+    [JsonPropertyName("preparationComplete")]
+    public bool PreparationComplete { get; set; }
+    [JsonPropertyName("unavailableCount")]
+    public int UnavailableCount { get; set; }
+    [JsonPropertyName("attemptCount")]
+    public int AttemptCount { get; set; }
+    [JsonPropertyName("nextAttemptUtc")]
+    public DateTime? NextAttemptUtc { get; set; }
+    [JsonPropertyName("expectedMediaType")]
+    public string? ExpectedMediaType { get; set; }
+    [JsonPropertyName("allowProviderFallback")]
+    public bool AllowProviderFallback { get; set; }
     [JsonPropertyName("id")]
     public long Id { get; set; }
 
@@ -50,6 +64,9 @@ public sealed class MediaRequest
 
     [JsonPropertyName("language")]
     public string Language { get; set; } = string.Empty;
+
+    [JsonPropertyName("subtitleLanguage")]
+    public string SubtitleLanguage { get; set; } = "none";
 
     [JsonPropertyName("provider")]
     public string Provider { get; set; } = string.Empty;
@@ -106,6 +123,7 @@ public sealed class MediaRequest
 /// <summary>Bekannte Anfrage-Statuswerte.</summary>
 public static class RequestStatuses
 {
+    public const string Ready = "ready";
     public const string Pending = "pending";
     public const string Processing = "processing";
     public const string Queued = "queued";

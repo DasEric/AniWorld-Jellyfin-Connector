@@ -48,15 +48,32 @@ export default function (view, params) {
     }
     return error && (error.message || error.statusText) || response && response.statusText || 'Anfrage fehlgeschlagen.';
   }
+  let toastTimer = null;
   function notice(message, error) {
     q('notice').innerHTML = '';
     if (!message) return;
-    const box = document.createElement('div'); box.className = 'mf-notice' + (error ? ' mf-error' : ''); box.textContent = message; q('notice').appendChild(box);
+    // Confirmations appear as a non-blocking toast (H0melab style) so they stay visible
+    // wherever the user scrolled to; errors remain inline until the next action.
+    if (!error) return toast(message);
+    const box = document.createElement('div'); box.className = 'mf-notice mf-error'; box.textContent = message; q('notice').appendChild(box);
+  }
+  function toast(message) {
+    const host = q('toast');
+    if (!host) return;
+    if (toastTimer) clearTimeout(toastTimer);
+    host.textContent = message; host.classList.add('show');
+    toastTimer = setTimeout(() => { toastTimer = null; host.classList.remove('show'); }, 5000);
+  }
+  function emptyLine(host, message) {
+    host.replaceChildren();
+    const box = document.createElement('div'); box.className = 'mf-emptyline'; box.textContent = message; host.appendChild(box);
   }
   function dialogNotice(message, error) {
     const host = q('dialog-notice'); host.innerHTML = '';
     if (!message) return;
     const box = document.createElement('div'); box.className = 'mf-notice' + (error ? ' mf-error' : ''); box.textContent = message; host.appendChild(box);
+    // On small screens the sticky action bar can cover the message; bring it into view.
+    if (typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'nearest' });
   }
   function switchTab(name) {
     state.tab = name;
@@ -68,13 +85,35 @@ export default function (view, params) {
   }
   view.querySelectorAll('.mf-tab').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
+  // Maintenance must be impossible to overlook: a large banner on the page and in the
+  // dialog, and every request/handover button stays disabled. The server enforces it too.
+  function maintenanceMessage() { return state.status.maintenanceMessage || 'Anfragen sind derzeit deaktiviert.'; }
+  function guardRequestButton() {
+    if (!state.status.maintenance) return;
+    q('request').disabled = true; q('request').textContent = 'Anfragen deaktiviert';
+  }
+  function applyMaintenance() {
+    const on = Boolean(state.status.maintenance);
+    q('maintenance').hidden = !on; q('maintenance-text').textContent = on ? maintenanceMessage() : '';
+    q('dialog-maintenance').hidden = !on; q('dialog-maintenance-text').textContent = on ? maintenanceMessage() : '';
+    if (on) guardRequestButton();
+    else if (q('request').textContent === 'Anfragen deaktiviert') q('request').textContent = 'Anfragen';
+    view.querySelectorAll('[data-mf-handover]').forEach((button) => { button.disabled = on; button.title = on ? 'Im Wartungsmodus deaktiviert' : ''; });
+  }
+  async function refreshStatus() {
+    try {
+      const status = await call('Status');
+      if (disposed || !view.isConnected) return;
+      state.status = Object.assign({}, state.status, status); applyMaintenance();
+    } catch (_) { /* the last known state stays visible */ }
+  }
   async function boot() {
     try {
       state.status = await call('Status');
       if (disposed || !view.isConnected) return;
       q('mode').textContent = state.status.mode === 'automatic' ? 'Direkter Download' : 'Freigabe durch Admin';
       if (!state.status.configured) notice('Das Plugin ist noch nicht mit AniWorld verbunden.', true);
-      else if (state.status.maintenance) notice(state.status.maintenanceMessage || 'Anfragen sind derzeit deaktiviert.', true);
+      applyMaintenance();
       const data = await call('Sources');
       if (disposed || !view.isConnected) return;
       state.sources = Array.isArray(data.sources) ? data.sources : [];
@@ -166,7 +205,7 @@ export default function (view, params) {
         groups = [{ source: item.id, label: item.label, error: error.message }];
       }
       if (disposed || generation !== searchGeneration || !view.isConnected) return;
-      const rendered = appendResults(host, groups, pending);
+      const rendered = await appendResults(host, groups, pending, generation);
       resultCount += rendered.count; errorCount += rendered.errors;
       }
     }));
@@ -175,22 +214,20 @@ export default function (view, params) {
     if (!resultCount && !errorCount) host.innerHTML = '<div class="mf-empty">Keine Treffer gefunden.</div>';
   });
 
-  function appendResults(host, groups, before) {
+  async function appendResults(host, groups, before, generation) {
     let count = 0; let errors = 0;
-    groups.forEach((group) => {
+    for (const group of groups) {
       const results = group.data && Array.isArray(group.data.results) ? group.data.results : [];
-      results.forEach((item) => {
+      for (const item of results) {
+        if (disposed || generation !== searchGeneration || !view.isConnected) return { count, errors };
         const card = createMediaCard(item, group.source, group.label);
-        card.dataset.relevance = String(Number(item.relevance) || 0);
-        card.dataset.sortTitle = item.title || item.name || '';
-        card.dataset.sortSource = group.source;
         host.insertBefore(card, before); count++;
-      });
+        // Keep the downloader's order and yield so large result sets remain interactive.
+        if (count % 24 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      if (disposed || generation !== searchGeneration || !view.isConnected) return { count, errors };
       if (group.error) { errors++; const box = document.createElement('div'); box.className = 'mf-notice mf-error'; box.textContent = group.label + ': ' + group.error; host.insertBefore(box, before); }
-    });
-    Array.from(host.querySelectorAll('.mf-card')).sort((a, b) => Number(b.dataset.relevance) - Number(a.dataset.relevance)
-      || a.dataset.sortTitle.localeCompare(b.dataset.sortTitle, 'de') || a.dataset.sortSource.localeCompare(b.dataset.sortSource))
-      .forEach((card) => host.insertBefore(card, before));
+    }
     return { count, errors };
   }
 
@@ -201,16 +238,9 @@ export default function (view, params) {
     if (poster) {
       const cover = document.createElement('img'); cover.className = 'mf-cover'; cover.loading = 'lazy'; cover.alt = '';
       card.appendChild(cover); loadCover(cover, poster, item, sourceId);
-    } else if (rawUrl) {
-      const cover = document.createElement('img'); cover.className = 'mf-cover'; cover.loading = 'lazy'; cover.alt = '';
-      card.appendChild(cover);
-      call('Series', { query: { url: rawUrl } })
-        .then((detail) => {
-          if (disposed || !cover.isConnected) return;
-          if (detail.poster_url) loadCover(cover, detail.poster_url); else cover.remove();
-        })
-        .catch(() => { if (!disposed && cover.isConnected) cover.remove(); });
     }
+    // A missing poster must not start a detail request for every search result.
+    // Full details are loaded when the user opens the selected title.
     const body = document.createElement('div'); body.className = 'mf-cardbody';
     const title = document.createElement('div'); title.className = 'mf-cardtitle'; title.textContent = item.title || item.name || 'Unbekannter Titel';
     const source = document.createElement('div'); source.className = 'mf-source'; source.textContent = [sourceLabel || sourceId, item.grouped_series ? 'Serie · Staffeln/Folgen im Detail' : '', item.author, item.year].filter(Boolean).join(' · ');
@@ -245,13 +275,18 @@ export default function (view, params) {
     }
   }
 
-  async function openDetail(item, source) {
+  async function openDetail(item, source, subtitleLanguage = 'none', preferredLanguage = state.status.defaultLanguage) {
     if (isCatalog(item.media_kind)) return openCatalogDetail(item, source);
     const rawUrl = item.url || item.link || item.series_url;
     if (!rawUrl) return notice('Der Treffer enthält keine AniWorld-URL.', true);
     const generation = ++detailGeneration;
     q('catalog-options').hidden = true; view.querySelector('.mf-options').hidden = false;
-    state.source = source; state.detail = null; q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">Bestand in Jellyfin wird geprüft…</div>'; dialogNotice(''); q('request').textContent = 'Anfragen'; q('request').disabled = true;
+    // Soft subtitles exist where the downloader offers them: SerienStream and ZDF.
+    const subtitles = source === 'sto' || source === 'zdf';
+    q('subtitle-field').hidden = !subtitles;
+    q('subtitle').value = subtitles ? subtitleLanguage : 'none';
+    q('subtitle').onchange = () => openDetail(item, source, q('subtitle').value, q('language').value || preferredLanguage);
+    state.source = source; state.detail = null; q('overlay').style.display = 'flex'; focusDialog('close'); refreshStatus(); q('detail-title').textContent = item.title || item.name || 'Laden…'; q('description').textContent = 'Vorhandene Staffeln und Episoden werden geprüft…'; q('plan').innerHTML = '<div class="mf-empty">Bestand in Jellyfin wird geprüft…</div>'; dialogNotice(''); q('request').textContent = 'Anfragen'; q('request').disabled = true;
     setOptions(q('language'), [], ''); setOptions(q('provider'), [], '');
     q('partial-container').hidden = true; q('partial').checked = false;
     try {
@@ -261,7 +296,7 @@ export default function (view, params) {
       // the existing detail/season plan, not by probing every search result.
       const type = source === 'mangafire' ? 'manga' : ['movie', 'series', 'manga'].includes(item.media_type)
         ? item.media_type : knownTypes.length === 1 ? knownTypes[0] : 'series';
-      const payload = { title: item.title || item.name || 'Unbekannter Titel', seriesUrl: rawUrl, source, mediaType: type };
+      const payload = { title: item.title || item.name || 'Unbekannter Titel', seriesUrl: rawUrl, source, mediaType: type, subtitleLanguage: q('subtitle').value };
       const plan = await call('Requests/Plan', { method: 'POST', body: payload });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
       state.detail = Object.assign(payload, { mediaType: source === 'mangafire' ? 'manga' : plan.is_movie ? 'movie' : 'series', title: plan.title || payload.title, plan });
@@ -272,27 +307,53 @@ export default function (view, params) {
         : [];
       const providerLanguages = Object.keys(plan.coverage || {}).length ? Object.keys(plan.coverage) : advertisedProviderLanguages;
       const languages = providerLanguages.slice();
-      setOptions(q('language'), languages, state.status.defaultLanguage);
+      // Never silently preselect another audio language when the configured choice is unavailable.
+      if (preferredLanguage && !languages.includes(preferredLanguage)) languages.unshift(preferredLanguage);
+      setOptions(q('language'), languages, preferredLanguage);
       const syncProviders = () => {
         const available = plan.providers && Array.isArray(plan.providers[q('language').value]) ? plan.providers[q('language').value] : [];
         setOptions(q('provider'), available, state.status.defaultProvider);
         const coverage = plan.coverage && plan.coverage[q('language').value];
         const missing = coverage ? coverage.missing_count : plan.missing_count;
         const unavailable = coverage ? coverage.unavailable_count : 0;
-        q('partial-container').hidden = unavailable === 0;
-        q('request').disabled = !missing || available.length === 0 || (unavailable > 0 && !q('partial').checked);
+        q('partial-container').hidden = true;
+        q('request').disabled = !missing || available.length === 0; guardRequestButton();
         q('plan').replaceChildren();
         const summary = document.createElement('div'); summary.className = 'mf-plan';
-        summary.textContent = coverage ? q('language').value + ': ' + coverage.available_count + '/' + plan.total_count + ' Inhalte an der Quelle bestätigt; '
-          + coverage.existing_count + ' in dieser Variante vorhanden; ' + missing + ' anfragbar; ' + unavailable + ' nicht bestätigt.'
+        const headline = document.createElement('div');
+        headline.textContent = coverage ? q('language').value + ': Bestand in dieser Sprache'
           : (plan.missing_count ? plan.missing_count + ' fehlende Inhalte.' : 'Bereits vorhanden.');
-        if (!providerLanguages.length) summary.textContent = 'Keine Sprache mit verfügbaren Providern bestätigt. Bitte später erneut prüfen.';
-        if (missing > 500) summary.textContent += ' Ein Serienauftrag mit ' + Math.ceil(missing / 500) + ' fortsetzbaren Arbeitsabschnitten.';
+        summary.appendChild(headline);
+        if (!providerLanguages.length) headline.textContent = 'Keine Sprache mit verfügbaren Providern bestätigt. Bitte später erneut prüfen.';
+        else if (!coverage && !available.length) headline.textContent = 'Die gewählte Sprache ist derzeit nicht bestätigt. Bitte später erneut prüfen oder ausdrücklich eine andere Sprache auswählen.';
+        else if (coverage) {
+          const stats = document.createElement('div'); stats.className = 'mf-stats';
+          [[coverage.available_count + '/' + plan.total_count, 'an der Quelle bestätigt', ''],
+            [coverage.existing_count, 'bereits vorhanden', coverage.existing_count ? 'good' : ''],
+            [missing, 'werden angefragt', missing ? 'good' : ''],
+            [unavailable, 'nicht bestätigt', unavailable ? 'warn' : '']].forEach(([value, label, tone]) => {
+            const stat = document.createElement('div'); stat.className = 'mf-stat' + (tone ? ' ' + tone : '');
+            const number = document.createElement('span'); number.className = 'mf-statvalue'; number.textContent = String(value);
+            const caption = document.createElement('span'); caption.className = 'mf-statlabel'; caption.textContent = label;
+            stat.append(number, caption); stats.appendChild(stat);
+          });
+          summary.appendChild(stats);
+          if (unavailable && missing) {
+            const note = document.createElement('div'); note.className = 'mf-plannote';
+            note.textContent = 'Nicht bestätigte Inhalte bleiben offen; die übrigen werden in dieser Sprache geladen.';
+            summary.appendChild(note);
+          }
+        }
+        if (missing > 500) {
+          const note = document.createElement('div'); note.className = 'mf-plannote';
+          note.textContent = 'Ein Serienauftrag mit ' + Math.ceil(missing / 500) + ' fortsetzbaren Arbeitsabschnitten.';
+          summary.appendChild(note);
+        }
         q('plan').appendChild(summary);
       };
       q('language').onchange = () => { q('partial').checked = false; syncProviders(); };
       q('partial').onchange = syncProviders; syncProviders();
-    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { q('description').textContent = error.message; q('plan').innerHTML = ''; dialogNotice(error.message, true); } }
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { q('description').textContent = ''; q('plan').innerHTML = ''; dialogNotice(error.message, true); } }
   }
   function setOptions(select, values, preferred) { const clean = Array.from(new Set(values.filter(Boolean))); select.innerHTML = ''; clean.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = value; select.appendChild(option); }); if (clean.includes(preferred)) select.value = preferred; }
   q('request').addEventListener('click', async () => {
@@ -308,17 +369,17 @@ export default function (view, params) {
     q('request').disabled = true;
     try {
       // upscale entfernt
-      const payload = { planToken: detail.plan.plan_token || '', title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.mediaType, language: q('language').value, provider: q('provider').value, allowPartial: q('partial').checked };
+      const payload = { planToken: detail.plan.plan_token || '', title: detail.title, seriesUrl: detail.seriesUrl, source: detail.source, mediaType: detail.mediaType, language: q('language').value, provider: q('provider').value, subtitleLanguage: detail.subtitleLanguage || 'none' };
       const result = await call('Requests/Automatic', { method: 'POST', body: payload });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
-      const message = result.status === 'queued' ? 'Nur die fehlenden Inhalte wurden direkt an AniWorld übergeben.' : 'Die Anfrage für die fehlenden Inhalte wurde an den Administrator gesendet.';
-      closeDetail(); notice(message); switchTab('mine');
-    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) dialogNotice(error.message, true); } finally { if (!disposed && generation === detailGeneration && view.isConnected) { q('request').textContent = 'Anfragen'; q('request').disabled = !q('language').value || !q('provider').value; } }
+      const message = detail.title + ' wurde erfolgreich angefragt.' + (result.status === 'pending' ? ' Die Anfrage wartet auf Freigabe.' : ' Die Verarbeitung läuft im Hintergrund.');
+      closeDetail(); notice(message);
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { dialogNotice(error.message, true); refreshStatus(); } } finally { if (!disposed && generation === detailGeneration && view.isConnected) { q('request').textContent = 'Anfragen'; q('request').disabled = !q('language').value || !q('provider').value; guardRequestButton(); } }
   });
   async function openCatalogDetail(item, source) {
     const generation = ++detailGeneration;
     state.detail = null;
-    q('overlay').style.display = 'flex'; q('detail-title').textContent = item.title || 'Laden…'; q('description').textContent = 'Katalogdetails werden geladen…';
+    q('overlay').style.display = 'flex'; focusDialog('close'); refreshStatus(); q('detail-title').textContent = item.title || 'Laden…'; q('description').textContent = 'Katalogdetails werden geladen…';
     q('plan').replaceChildren(); dialogNotice(''); q('request').disabled = true; q('request').textContent = 'Anfragen';
     q('partial-container').hidden = true;
     view.querySelector('.mf-options').hidden = true; q('catalog-options').hidden = false; q('format').replaceChildren(); q('catalog-target').textContent = '';
@@ -332,7 +393,7 @@ export default function (view, params) {
       q('format').onchange = () => {
         if (!state.detail || state.detail.backend !== 'catalog') return;
         const asset = state.detail.assets.find((asset) => asset.id === q('format').value);
-        q('request').disabled = !asset || asset.downloaded;
+        q('request').disabled = !asset || asset.downloaded; guardRequestButton();
         q('catalog-target').textContent = asset ? (asset.downloaded ? 'Diese Datei ist bereits im Downloader vorhanden.' : asset.target_path || '') : 'Keine herunterladbare Datei verfügbar.';
       };
       q('format').onchange();
@@ -347,12 +408,33 @@ export default function (view, params) {
     try {
       const result = await call('Requests/Catalog', { method: 'POST', body: { source: detail.source, itemId: detail.id, assetId: asset.id, mediaType: detail.media_kind } });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
-      closeDetail(); notice(result.status === 'completed' ? 'Die ausgewählte Datei ist bereits heruntergeladen.' : result.status === 'queued' ? 'Die ausgewählte Datei wurde an den Downloader übergeben.' : 'Die Anfrage wurde an den Administrator gesendet.'); switchTab('mine');
-    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) dialogNotice(error.message, true); }
-    finally { if (!disposed && generation === detailGeneration && view.isConnected) q('request').disabled = false; }
+      closeDetail(); notice(detail.title + ' wurde erfolgreich angefragt.' + (result.status === 'pending' ? ' Die Anfrage wartet auf Freigabe.' : ' Die Verarbeitung läuft im Hintergrund.'));
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { dialogNotice(error.message, true); refreshStatus(); } }
+    finally { if (!disposed && generation === detailGeneration && view.isConnected) { q('request').disabled = false; guardRequestButton(); } }
   }
-  function closeDetail() { detailGeneration++; state.detail = null; dialogNotice(''); q('overlay').style.display = 'none'; }
+  function closeDetail() {
+    detailGeneration++; state.detail = null; dialogNotice('');
+    const wasOpen = q('overlay').style.display === 'flex';
+    q('overlay').style.display = 'none';
+    if (wasOpen && detailOpener && detailOpener.isConnected) detailOpener.focus();
+    detailOpener = null;
+  }
+  let detailOpener = null;
+  function focusDialog(name) {
+    // A lingering confirmation toast must not cover the dialog's action buttons.
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    if (q('toast')) q('toast').classList.remove('show');
+    // Remember the card that opened the dialog so keyboard users return to it.
+    if (name === 'close' && !detailOpener && view.contains(document.activeElement)) detailOpener = document.activeElement;
+    const target = q(name); if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+  }
   q('close').addEventListener('click', closeDetail); q('cancel').addEventListener('click', closeDetail); q('overlay').addEventListener('click', (e) => { if (e.target === q('overlay')) closeDetail(); });
+  q('delete-overlay').addEventListener('click', (e) => { if (e.target === q('delete-overlay')) closeDeletePreview(); });
+  view.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (q('delete-overlay').style.display === 'flex') { event.preventDefault(); closeDeletePreview(); }
+    else if (q('overlay').style.display === 'flex') { event.preventDefault(); closeDetail(); }
+  });
 
   function stopMinePolling() {
     if (mineTimer) clearTimeout(mineTimer);
@@ -393,13 +475,13 @@ export default function (view, params) {
       const byQueue = new Map(progress.map((item) => [item.queue_id, item]));
       renderRequests(q('mine'), items, false, byQueue);
       mineRendered = true;
-      const hasActiveDownload = items.some((item) => item.status === 'queued')
+      const hasActiveDownload = items.some((item) => ['ready', 'processing', 'queued'].includes(item.status))
         || progress.some((item) => item.status === 'queued' || item.status === 'running');
       scheduleMineRefresh(hasActiveDownload);
       if (initial || !hasActiveDownload) loadDownloads(false);
     } catch (error) {
       if (disposed || !view.isConnected) return;
-      if (!mineRendered) q('mine').textContent = error.message;
+      if (!mineRendered) emptyLine(q('mine'), error.message);
       else notice('Meine Anfragen konnten nicht aktualisiert werden: ' + error.message, true);
       scheduleMineRefresh(true);
     } finally { mineLoading = false; }
@@ -412,7 +494,7 @@ export default function (view, params) {
       if (!disposed && view.isConnected) renderRequests(q('admin'), items, true);
       await Promise.all([loadDownloads(true), loadLibrary()]);
     } catch (error) {
-      if (!disposed && view.isConnected) q('admin').textContent = error.message;
+      if (!disposed && view.isConnected) emptyLine(q('admin'), error.message);
     }
   }
   async function loadDownloads(admin) {
@@ -421,27 +503,37 @@ export default function (view, params) {
       const groups = await call(admin ? 'Admin/Downloads' : 'Downloads/Mine');
       if (disposed || !view.isConnected) return;
       host.replaceChildren();
-      if (!groups.length) host.textContent = 'Noch keine nachweislich zugeordneten Downloads vorhanden.';
+      if (!groups.length) emptyLine(host, 'Noch keine nachweislich zugeordneten Downloads vorhanden.');
       groups.forEach((group) => {
-        const card = document.createElement('div'); card.className = 'mf-request';
-        const title = document.createElement('strong'); title.textContent = group.title; card.appendChild(title);
+        const card = document.createElement('article'); card.className = 'mf-request';
+        const title = document.createElement('div'); title.className = 'mf-requesttitle'; title.textContent = group.title; card.appendChild(title);
         const meta = document.createElement('div'); meta.className = 'mf-meta';
         meta.textContent = group.files.length + ' Dateien · Angefragt: ' + Array.from(new Set(group.files.map((file) => file.language))).join(', ');
         card.appendChild(meta);
+        const files = document.createElement('div'); files.className = 'mf-filelist';
         group.files.forEach((file) => {
-          const row = document.createElement('div'); row.className = 'mf-meta';
+          const row = document.createElement('div'); row.className = 'mf-file';
+          const name = document.createElement('div'); name.className = 'mf-filename'; name.textContent = file.name;
           const audio = (file.streams || []).filter((stream) => stream.codec_type === 'audio').map((stream) => stream.tags && stream.tags.language).filter(Boolean);
-          row.textContent = file.name + ' · ' + file.state + ' · Tonspuren: ' + (audio.join(', ') || 'unbekannt')
+          const details = document.createElement('div');
+          details.textContent = file.state + ' · Tonspuren: ' + (audio.join(', ') || 'unbekannt')
             + ' · ' + ({ verified: 'Sprache bestätigt', mismatch: 'Tonspur weicht von der Anfrage ab', unknown: 'Sprachprüfung unbestätigt' }[file.verification] || 'Sprachprüfung unbestätigt');
-          if (file.verification === 'mismatch') row.classList.add('mf-error'); card.appendChild(row);
+          if (file.verification === 'mismatch') row.classList.add('mf-error');
+          if (file.subtitleLanguage === 'deu') {
+            details.textContent += ' · Untertitel Deutsch: ' + ({ verified: 'bestätigt', missing: 'fehlen', unknown: 'Prüfung offen' }[file.subtitleVerification] || 'Prüfung offen');
+            if (file.subtitleVerification === 'missing') row.classList.add('mf-error');
+          }
+          row.append(name, details); files.appendChild(row);
         });
+        if (files.children.length) card.appendChild(files);
         if (group.canDelete) {
-          const button = document.createElement('button'); button.className = 'mf-btn danger'; button.textContent = admin ? 'Zugeordnete Downloads löschen' : 'Eigene Downloads / Serie löschen';
-          button.onclick = () => deleteDownload((admin ? 'Admin/' : '') + 'Downloads', group.id, admin); card.appendChild(button);
+          const actions = document.createElement('div'); actions.className = 'mf-actions';
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'mf-btn danger'; button.textContent = admin ? 'Zugeordnete Downloads löschen' : 'Eigene Downloads / Serie löschen';
+          button.onclick = () => deleteDownload((admin ? 'Admin/' : '') + 'Downloads', group.id, admin); actions.appendChild(button); card.appendChild(actions);
         }
         host.appendChild(card);
       });
-    } catch (error) { if (!disposed && view.isConnected) host.textContent = error.message; }
+    } catch (error) { if (!disposed && view.isConnected) emptyLine(host, error.message); }
   }
   async function deleteDownload(base, id, admin) {
     try {
@@ -484,14 +576,19 @@ export default function (view, params) {
       const items = await call('Admin/Library', { query: { query: q('library-query').value.trim() } });
       if (disposed || !view.isConnected) return;
       host.replaceChildren();
-      if (!items.length) host.textContent = 'Keine passenden Bibliotheksinhalte.';
+      if (!items.length) emptyLine(host, 'Keine passenden Bibliotheksinhalte.');
       items.forEach((item) => {
-        const card = document.createElement('div'); card.className = 'mf-request';
-        const title = document.createElement('strong'); title.textContent = item.title + ' · ' + categoryLabel(item.mediaType);
-        const button = document.createElement('button'); button.className = 'mf-btn danger'; button.textContent = 'Als Admin vollständig löschen';
-        button.onclick = () => deleteDownload('Admin/Library', item.id, true); card.append(title, document.createElement('br'), button); host.appendChild(card);
+        const card = document.createElement('article'); card.className = 'mf-request';
+        const top = document.createElement('div'); top.className = 'mf-requesttop';
+        const title = document.createElement('div'); title.className = 'mf-requesttitle'; title.textContent = item.title;
+        const kind = document.createElement('span'); kind.className = 'mf-pill'; kind.textContent = categoryLabel(item.mediaType);
+        top.append(title, kind);
+        const actions = document.createElement('div'); actions.className = 'mf-actions';
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'mf-btn danger'; button.textContent = 'Als Admin vollständig löschen';
+        button.onclick = () => deleteDownload('Admin/Library', item.id, true); actions.appendChild(button);
+        card.append(top, actions); host.appendChild(card);
       });
-    } catch (error) { if (!disposed && view.isConnected) host.textContent = error.message; }
+    } catch (error) { if (!disposed && view.isConnected) emptyLine(host, error.message); }
   }
   q('library-search').addEventListener('submit', (event) => { event.preventDefault(); loadLibrary(); });
   function renderRequests(host, items, admin, progressByQueue) {
@@ -543,7 +640,7 @@ export default function (view, params) {
   }
   function updateRequestCard(card, item, admin, progress) {
     card.querySelector('[data-role="title"]').textContent = item.title;
-    card.querySelector('[data-role="meta"]').textContent = (admin ? item.username + ' · ' : '') + categoryLabel(item.mediaType) + ' · ' + (item.selectionLabel || ((item.episodes || []).length + ' Episoden')) + ' · ' + item.language + ' · ' + new Date(item.createdUtc).toLocaleString();
+    card.querySelector('[data-role="meta"]').textContent = (admin ? item.username + ' · ' : '') + categoryLabel(item.mediaType) + ' · ' + (item.selectionLabel || ((item.episodes || []).length + ' Episoden')) + ' · ' + item.language + (item.subtitleLanguage === 'deu' ? ' · Untertitel: Deutsch' : '') + ' · ' + new Date(item.createdUtc).toLocaleString();
     const pill = card.querySelector('[data-role="pill"]'); pill.className = 'mf-pill ' + item.status; pill.textContent = progressLabel(progress) || statusLabel(item.status);
     const progressBox = card.querySelector('[data-role="progress"]'); progressBox.hidden = !progress;
     if (progress) {
@@ -553,7 +650,7 @@ export default function (view, params) {
     const error = card.querySelector('[data-role="error"]'); error.hidden = !item.error; error.textContent = item.error || '';
     const actions = card.querySelector('[data-role="actions"]'); actions.innerHTML = '';
     if (admin && (item.status === 'pending' || item.status === 'failed')) {
-      const approve = document.createElement('button'); approve.className = 'mf-btn'; approve.textContent = item.status === 'failed' ? 'Erneut versuchen' : 'Freigeben'; approve.onclick = () => decide(item.id, 'Approve');
+      const approve = document.createElement('button'); approve.className = 'mf-btn'; approve.textContent = item.status === 'failed' ? 'Erneut versuchen' : 'Freigeben'; approve.dataset.mfHandover = '1'; approve.disabled = Boolean(state.status.maintenance); if (approve.disabled) approve.title = 'Im Wartungsmodus deaktiviert'; approve.onclick = () => decide(item.id, 'Approve');
       const reject = document.createElement('button'); reject.className = 'mf-btn danger'; reject.textContent = 'Ablehnen'; reject.onclick = () => decide(item.id, 'Reject'); actions.append(approve, reject);
     } else if (!admin && item.status === 'pending') {
       const withdraw = document.createElement('button'); withdraw.className = 'mf-btn danger'; withdraw.textContent = 'Anfrage zurückziehen'; withdraw.onclick = () => withdrawRequest(item.id); actions.appendChild(withdraw);
@@ -572,7 +669,7 @@ export default function (view, params) {
     return ({ queued: 'Wartet auf Download', completed: 'Fertig', partial: 'Teilweise fertig', failed: 'Fehlgeschlagen', cancelled: 'Abgebrochen' })[progress.status] || ''; 
   }
   function progressDetail(progress) { const phase = ({ download: 'Download', ffmpeg: 'Verarbeitung' })[progress.phase] || 'Download'; const episodes = progress.total_episodes > 1 ? ' · ' + progress.current_episode + '/' + progress.total_episodes + ' Episoden' : ''; return phase + ': ' + Math.round(Number(progress.percent) || 0) + '%' + episodes; }
-  function statusLabel(status) { return ({ pending: 'Ausstehend', processing: 'Wird übergeben', queued: 'Wartet auf Download', completed: 'Fertig', available: 'Bereits in Jellyfin vorhanden', partial: 'Teilweise fertig', cancelled: 'Abgebrochen', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen', failed: 'Fehlgeschlagen' })[status] || status; }
+  function statusLabel(status) { return ({ pending: 'Wartet auf Freigabe', ready: 'Wartet auf Vorbereitung', processing: 'Wird vorbereitet', queued: 'Wartet auf Download', completed: 'Fertig', available: 'Bereits in Jellyfin vorhanden', partial: 'Teilweise fertig', cancelled: 'Abgebrochen', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen', failed: 'Fehlgeschlagen' })[status] || status; }
   q('refresh-mine').addEventListener('click', () => { loadMine({ initial: !mineRendered }); loadDownloads(false); }); q('refresh-admin').addEventListener('click', loadAdmin);
   setVisibilityListener(true);
   view.addEventListener('viewshow', () => { if (disposed) return; mineVisible = true; setVisibilityListener(true); if (state.tab === 'mine') loadMine({ initial: !mineRendered }); });
@@ -584,6 +681,7 @@ export default function (view, params) {
     mineVisible = false;
     stopMinePolling();
     setVisibilityListener(false);
+    if (toastTimer) clearTimeout(toastTimer);
     searchGeneration++;
     detailGeneration++;
     discoverGeneration++;

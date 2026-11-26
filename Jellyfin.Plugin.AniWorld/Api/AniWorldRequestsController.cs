@@ -333,6 +333,7 @@ public sealed class AniWorldRequestsController : ControllerBase
                     Source = request.Source,
                     MediaType = request.MediaType,
                     Language = request.Language,
+                    SubtitleLanguage = request.SubtitleLanguage,
                     Provider = request.Provider,
                 },
                 requireGrant: true,
@@ -365,7 +366,7 @@ public sealed class AniWorldRequestsController : ControllerBase
         MediaRequest result;
         try { result = await _application.ApproveAsync(id, admin, cancellationToken).ConfigureAwait(false); }
         catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
-        if (result.Status is RequestStatuses.Queued or RequestStatuses.Available or RequestStatuses.Completed)
+        if (result.Status is RequestStatuses.Ready or RequestStatuses.Processing or RequestStatuses.Queued or RequestStatuses.Available or RequestStatuses.Completed)
         {
             return Ok(result);
         }

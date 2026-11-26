@@ -9,20 +9,24 @@ public sealed partial class AniWorldClient
     private static readonly JsonSerializerOptions ConnectorJson = new(JsonSerializerDefaults.Web);
 
     public async Task SaveMediaTargetsAsync(int movie, int series, int revision, CancellationToken token)
-        => _ = await SendAsync(HttpMethod.Put, "api/media-targets", new { movie, series, revision }, token).ConfigureAwait(false);
+    {
+        try { _ = await SendAsync(HttpMethod.Put, "api/media-targets", new { movie, series, revision }, token).ConfigureAwait(false); }
+        // Even a failed save may have changed the targets; never keep serving the old ones.
+        finally { await InvalidateMetadataAsync("api/connector/capabilities").ConfigureAwait(false); }
+    }
 
     public async Task<ConnectorCapabilities> GetConnectorCapabilitiesAsync(CancellationToken token)
     {
         JsonElement json;
         try { json = await GetMetadataAsync("api/connector/capabilities", token).ConfigureAwait(false); }
         catch (AniWorldException error) when (error.UpstreamStatusCode == HttpStatusCode.NotFound)
-        { throw new AniWorldException(HttpStatusCode.ServiceUnavailable, "Für diese Funktion H0melab Downloader 2.3.0 oder neuer installieren."); }
+        { throw new AniWorldException(HttpStatusCode.ServiceUnavailable, "Der H0melab Downloader bietet keine Connector-Schnittstelle. Bitte H0melab Downloader 2.5.0 oder neuer installieren (2.4.0 unterstützt den Connector nicht)."); }
         var value = json.Deserialize<ConnectorCapabilities>(ConnectorJson);
         if (value is null || value.Protocol != 1 || !Guid.TryParseExact(value.InstanceId, "N", out _)
             || !value.FileReceipts || !value.EntryOptions || value.VideoGroups < 1 || value.MaxEntries < 500 || value.Paths is null || value.Paths.Count == 0
             || value.Paths.Select(path => path.Id).Distinct().Count() != value.Paths.Count
             || value.Paths.Any(path => string.IsNullOrWhiteSpace(path.Path)))
-            throw new AniWorldException(HttpStatusCode.BadGateway, "Bitte H0melab Downloader 2.3.0 oder neuer mit Seriengruppen und zentralen Medienzielen installieren.");
+            throw new AniWorldException(HttpStatusCode.BadGateway, "Bitte H0melab Downloader 2.5.0 oder neuer mit Seriengruppen und zentralen Medienzielen installieren.");
         return value;
     }
 
@@ -90,6 +94,9 @@ public sealed record DownloadArtifact(string Id, [property: JsonPropertyName("re
     string Name, [property: JsonPropertyName("media_type")] string MediaType, string Language, long Size, string State,
     JsonElement Streams)
 {
+    public string VerifySubtitle(string subtitleLanguage)
+        => subtitleLanguage == "none" ? "not_requested" : Streams.ValueKind != JsonValueKind.Array ? "unknown"
+            : Languages("subtitle").Contains(subtitleLanguage, StringComparer.Ordinal) ? "verified" : "missing";
     [JsonIgnore]
     public string Verification
     {

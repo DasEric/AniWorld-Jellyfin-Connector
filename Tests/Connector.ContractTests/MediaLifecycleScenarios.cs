@@ -22,12 +22,16 @@ internal static class MediaLifecycleScenarios
         Check(json.GetProperty("coverage").GetProperty("German Dub").GetProperty("missing_count").GetInt32() == 1);
     });
 
-    internal static void PartialSelectionRequiresConsent() => Run(async fixture =>
+    internal static void PartialSelectionDownloadsAvailableAndRemainsPartial() => Run(async fixture =>
     {
-        await ExpectApplication(HttpStatusCode.Conflict, () => fixture.Submit("German Dub", false));
-        var result = await fixture.Submit("German Dub", true);
-        Check(result.Disposition == SubmitDisposition.Stored && result.Request!.Episodes.Count == 1);
-        Check(result.Request!.Episodes[0].Language == "German Dub");
+        fixture.Config.AutoApproveRequests = true;
+        var result = await fixture.Submit("German Dub", false);
+        Check(result.Request!.Status == RequestStatuses.Ready && fixture.DownloadCalls == 0);
+        var processed = await fixture.Process(result.Request.Id);
+        Check(processed.Status == RequestStatuses.Queued && processed.Episodes.Count == 1);
+        Check(processed.Episodes[0].Language == "German Dub" && processed.UnavailableCount == 1);
+        await fixture.Store.SyncQueueStatesForAllAsync(new Dictionary<long, string> { [42] = "completed" }, default);
+        Check((await fixture.Store.GetAsync(processed.Id, default))!.Status == RequestStatuses.Partial);
     });
 
     internal static void ProviderNeverComesFromOnlyTheFirstEpisode() => Run(async fixture =>
@@ -36,8 +40,14 @@ internal static class MediaLifecycleScenarios
         var plan = await fixture.Plan();
         Check(plan.Providers["German Dub"].SequenceEqual(["Automatic"]));
         var result = await fixture.Submit("German Dub", false, "Automatic");
-        Check(result.Request!.Episodes.Select(item => item.Provider).SequenceEqual(["VOE", "Filemoon"]));
-        await ExpectApplication(HttpStatusCode.BadRequest, () => fixture.Submit("German Dub", false, "VOE"));
+        await fixture.Application.ApproveAsync(result.Request!.Id, "admin", default);
+        var processed = await fixture.Process(result.Request.Id);
+        Check(processed.Episodes.Select(item => item.Provider).SequenceEqual(["VOE", "Filemoon"]));
+        await fixture.Store.SyncQueueStatesForAllAsync(new Dictionary<long, string> { [42] = "completed" }, default);
+        var invalid = await fixture.Submit("German Dub", false, "VOE");
+        await fixture.Application.ApproveAsync(invalid.Request!.Id, "admin", default);
+        Check((await fixture.Process(invalid.Request.Id)).Status == RequestStatuses.Failed);
+        Check(fixture.DownloadCalls == 1);
     });
 
     internal static void NoInventedLanguageOrJellixFallback() => Run(async fixture =>
@@ -45,7 +55,11 @@ internal static class MediaLifecycleScenarios
         fixture.Offers[0] = new() { ["English Dub"] = ["VOE"] };
         var plan = await fixture.Plan();
         Check(!plan.Languages.Contains("German Dub"));
-        await ExpectApplication(HttpStatusCode.BadGateway, () => fixture.Submit("German Dub", true));
+        var result = await fixture.Submit("German Dub", true);
+        await fixture.Application.ApproveAsync(result.Request!.Id, "admin", default);
+        var processed = await fixture.Process(result.Request.Id);
+        Check(processed.Status == RequestStatuses.Ready && fixture.DownloadCalls == 0);
+        Check(processed.Error is not null && processed.NextAttemptUtc.HasValue);
     });
 
     internal static void AudioAndSubtitlesAreDifferent()
@@ -91,11 +105,23 @@ internal static class MediaLifecycleScenarios
         fixture.Config.AutoApproveRequests = true;
         fixture.EnableRouting();
         var request = await fixture.Submit("German Dub", false);
-        Check(request.Disposition == SubmitDisposition.Queued);
+        Check((await fixture.Process(request.Request!.Id)).Status == RequestStatuses.Queued);
         var payload = fixture.LastPayload;
         Check(payload.GetProperty("connector_protocol").GetInt32() == 1);
         Check(payload.GetProperty("episodes").EnumerateArray().All(item => item.GetProperty("custom_path_id").GetInt32() == 2));
         Check((await fixture.Ownership.ListAsync("alice", false, default)).Count == 1);
+    });
+
+    internal static void MissingCentralDestinationsNeverUseASiteDefault() => Run(async fixture =>
+    {
+        // MegaKino's site default is the movie folder; a detected show must not land there.
+        fixture.Central = false;
+        fixture.Offers[1] = new() { ["German Dub"] = ["VOE"] };
+        fixture.Config.AutoApproveRequests = true;
+        var request = await fixture.Submit("German Dub", false);
+        var processed = await fixture.Process(request.Request!.Id);
+        Check(processed.Status == RequestStatuses.Failed && fixture.DownloadCalls == 0);
+        Check(processed.Error!.Contains("Film- und Serienziele", StringComparison.Ordinal));
     });
 
     internal static void CentralDestinationsWorkWithoutLocalOverride() => Run(async fixture =>
@@ -103,7 +129,7 @@ internal static class MediaLifecycleScenarios
         fixture.Central = true;
         fixture.Config.AutoApproveRequests = true;
         var result = await fixture.Submit("English Dub", false);
-        Check(result.Disposition == SubmitDisposition.Queued);
+        Check((await fixture.Process(result.Request!.Id)).Status == RequestStatuses.Queued);
         Check(fixture.LastPayload.GetProperty("episodes").EnumerateArray().All(item => item.GetProperty("custom_path_id").GetInt32() == 2));
     });
 
@@ -115,7 +141,7 @@ internal static class MediaLifecycleScenarios
         fixture.Config.MovieDownloadRoot = fixture.Series; fixture.Config.SeriesDownloadRoot = fixture.Movies;
         fixture.Config.AutoApproveRequests = true;
         var result = await fixture.Submit("English Dub", false);
-        Check(result.Disposition == SubmitDisposition.QueueFailed && fixture.DownloadCalls == 0);
+        Check((await fixture.Process(result.Request!.Id)).Status == RequestStatuses.Failed && fixture.DownloadCalls == 0);
     });
 
     internal static void MediaDestinationWireFieldsAreExplicit()
@@ -137,7 +163,7 @@ internal static class MediaLifecycleScenarios
         fixture.Config.AutoApproveRequests = true;
         fixture.EnableRouting();
         var request = await fixture.Submit("German Dub", false);
-        Check(request.Disposition == SubmitDisposition.Queued);
+        Check((await fixture.Process(request.Request!.Id)).Status == RequestStatuses.Queued);
         var items = fixture.LastPayload.GetProperty("episodes").EnumerateArray().ToArray();
         Check(items[0].GetProperty("media_type").GetString() == "series" && items[0].GetProperty("custom_path_id").GetInt32() == 2);
         Check(items[1].GetProperty("media_type").GetString() == "movie" && items[1].GetProperty("custom_path_id").GetInt32() == 1);
@@ -149,7 +175,7 @@ internal static class MediaLifecycleScenarios
         fixture.Config.SeriesPathId = 9999;
         fixture.Config.AutoApproveRequests = true;
         var request = await fixture.Submit("English Dub", false);
-        Check(request.Disposition == SubmitDisposition.QueueFailed && fixture.DownloadCalls == 0);
+        Check((await fixture.Process(request.Request!.Id)).Status == RequestStatuses.Failed && fixture.DownloadCalls == 0);
     });
 
     internal static void OwnershipPersistsWithoutRequestHistory() => Run(async fixture =>
@@ -194,6 +220,20 @@ internal static class MediaLifecycleScenarios
         catch (AniWorldException error) { Check(error.StatusCode == HttpStatusCode.Conflict); }
     });
 
+    internal static void SavedDestinationsAreUsedImmediately() => Run(async fixture =>
+    {
+        // The settings page reads capabilities, saves the targets, and a request follows at once.
+        fixture.Central = false;
+        Check((await fixture.Client.GetConnectorCapabilitiesAsync(default)).MediaTargets?.Enabled == false);
+        fixture.EnableRouting();
+        await fixture.Routing.ValidateAsync(fixture.Config, fixture.Client, default);
+        Check((await fixture.Client.GetConnectorCapabilitiesAsync(default)).MediaTargets?.Enabled == true);
+        fixture.Offers[1] = new() { ["German Dub"] = ["VOE"] };
+        fixture.Config.AutoApproveRequests = true;
+        var request = await fixture.Submit("German Dub", false);
+        Check((await fixture.Process(request.Request!.Id)).Status == RequestStatuses.Queued && fixture.DownloadCalls == 1);
+    });
+
     internal static async Task ExpectApplication(HttpStatusCode code, Func<Task> action)
     {
         try { await action(); }
@@ -217,7 +257,11 @@ internal static class MediaLifecycleScenarios
         internal readonly List<string> DeletedIds = [];
         internal JsonElement LastPayload;
         internal int DownloadCalls;
-        internal bool Mixed, ProbeWrongPath, Central;
+        internal int RemoteCalls;
+        internal bool RejectRemoteCalls, FailProviders;
+        internal bool Mixed, ProbeWrongPath;
+        // A correctly set up downloader 2.5+ has central movie/show destinations.
+        internal bool Central = true;
         internal readonly ILibraryManager Library;
         internal readonly DownloadOwnershipStore Ownership;
         internal readonly RequestStore Store;
@@ -236,9 +280,10 @@ internal static class MediaLifecycleScenarios
             Secrets = new SecretStore(Directory); Secrets.SetApiKey("test-key");
             _http = new HttpClient(new Handler(Respond));
             Client = new AniWorldClient(_http, Secrets, () => Config, Routing, Ownership);
-            Application = new AniWorldRequestApplicationService(Client, Store, new MediaAccessGrantStore(), new UserRateLimiter(),
-                new JellyfinLibraryAvailabilityService(Library), new JellixSelectionTokenStore(), () => Config);
+            Application = CreateApplication(Store);
         }
+        internal AniWorldRequestApplicationService CreateApplication(RequestStore store) => new(Client, store,
+            new MediaAccessGrantStore(), new UserRateLimiter(), new JellyfinLibraryAvailabilityService(Library), new JellixSelectionTokenStore(), () => Config);
         internal void EnableRouting()
         {
             Config.EnableMediaRouting = true; Config.MoviePathId = 1; Config.SeriesPathId = 2;
@@ -251,6 +296,11 @@ internal static class MediaLifecycleScenarios
         internal Task<MissingMediaPlan> Plan() => Application.PlanAsync("alice", Selection(), false, false, default);
         internal Task<SubmitMediaRequestResult> Submit(string language, bool partial, string provider = "VOE")
             => Application.SubmitAutomaticAsync("alice", "Alice", Selection(language, partial, provider), false, default);
+        internal async Task<MediaRequest> Process(long id)
+        {
+            await Application.ProcessReadyRequestsAsync(default);
+            return (await Store.GetAsync(id, default))!;
+        }
         internal async Task AddReceipt(string user, char key, char identity)
         {
             var requestKey = new string(key, 32);
@@ -259,7 +309,10 @@ internal static class MediaLifecycleScenarios
         }
         private async Task<HttpResponseMessage> Respond(HttpRequestMessage request)
         {
+            Interlocked.Increment(ref RemoteCalls);
+            if (RejectRemoteCalls) throw new InvalidOperationException("No remote request allowed during admission.");
             var path = request.RequestUri!.AbsolutePath;
+            if (FailProviders && path == "/api/providers") return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             object data;
             if (path == "/api/settings") data = new { enable_sto = true, enable_megakino = true };
             else if (path == "/api/sources") return new HttpResponseMessage(HttpStatusCode.NotFound);

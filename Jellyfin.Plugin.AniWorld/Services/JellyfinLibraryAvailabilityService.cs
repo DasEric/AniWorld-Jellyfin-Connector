@@ -22,13 +22,13 @@ public sealed class JellyfinLibraryAvailabilityService
     public JellyfinLibraryAvailabilityService(ILibraryManager libraryManager, IMediaSourceManager mediaSources)
         : this(libraryManager) => _mediaSources = mediaSources;
 
-    public LibraryAvailability GetAvailability(LibraryMediaIdentity identity, string? language = null)
+    public LibraryAvailability GetAvailability(LibraryMediaIdentity identity, string? language = null, string subtitleLanguage = "none")
     {
         var itemType = identity.IsMovie ? BaseItemKind.Movie : BaseItemKind.Series;
         var matches = FindMatches(identity, itemType);
         if (identity.IsMovie || matches.Count == 0)
         {
-            return new LibraryAvailability(matches.Any(item => HasVariant(item, language)), new HashSet<LibraryEpisodeKey>());
+            return new LibraryAvailability(matches.Any(item => HasVariant(item, language, subtitleLanguage)), new HashSet<LibraryEpisodeKey>());
         }
 
         var episodes = _libraryManager.GetItemList(new InternalItemsQuery
@@ -39,16 +39,16 @@ public sealed class JellyfinLibraryAvailabilityService
             IsVirtualItem = false,
             EnableTotalRecordCount = false,
         });
-        return new LibraryAvailability(true, BuildEpisodeSet(episodes.OfType<Episode>().Where(item => HasVariant(item, language))));
+        return new LibraryAvailability(true, BuildEpisodeSet(episodes.OfType<Episode>().Where(item => HasVariant(item, language, subtitleLanguage))));
     }
 
-    private bool HasVariant(BaseItem item, string? language)
+    private bool HasVariant(BaseItem item, string? language, string subtitleLanguage)
     {
         if (string.IsNullOrWhiteSpace(language)) return true;
         if (_mediaSources is null || item is not Video video) return false;
         // An audio track on one version cannot satisfy subtitles on another.
         return _mediaSources.GetStaticMediaSources(video, false)
-            .Any(source => MediaLanguage.Matches(source.MediaStreams ?? [], language));
+            .Any(source => MediaLanguage.Matches(source.MediaStreams ?? [], language, subtitleLanguage));
     }
 
     internal static HashSet<LibraryEpisodeKey> BuildEpisodeSet(IEnumerable<Episode> episodes)

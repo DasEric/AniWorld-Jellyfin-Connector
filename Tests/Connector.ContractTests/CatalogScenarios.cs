@@ -25,18 +25,18 @@ internal static class CatalogScenarios
             Reject(() => fixture.Application.SubmitSelectionAsync("other-user", "Other", token, CancellationToken.None).GetAwaiter().GetResult());
             var result = fixture.Application.SubmitSelectionAsync("user", "User", token, CancellationToken.None).GetAwaiter().GetResult();
             Check(result.Request?.UserId == "user");
-            Check(result.Request?.Status == (automatic ? RequestStatuses.Queued : RequestStatuses.Pending));
-            Check(fixture.DownloadCalls == (automatic ? 1 : 0));
+            Check(result.Request?.Status == (automatic ? RequestStatuses.Ready : RequestStatuses.Pending));
+            Check(fixture.DownloadCalls == 0);
             Check((fixture.Application.ListForUserAsync("other-user", 500, false, CancellationToken.None).GetAwaiter().GetResult()).Count == 0);
             Reject(() => fixture.Application.SubmitSelectionAsync("user", "User", token, CancellationToken.None).GetAwaiter().GetResult());
             if (!automatic)
             {
                 var approved = fixture.Application.ApproveAsync(result.Request!.Id, "admin", CancellationToken.None).GetAwaiter().GetResult();
-                if (approved.Status != RequestStatuses.Queued) throw new InvalidOperationException("Approval result: " + approved.Status + " / " + approved.Error);
-                Check(approved.Status == RequestStatuses.Queued && fixture.DownloadCalls == 1);
+                Check(approved.Status == RequestStatuses.Ready && fixture.DownloadCalls == 0);
                 fixture.Application.ApproveAsync(result.Request.Id, "admin", CancellationToken.None).GetAwaiter().GetResult();
-                Check(fixture.DownloadCalls == 1);
             }
+            fixture.Application.ProcessReadyRequestsAsync(default).GetAwaiter().GetResult();
+            Check(fixture.DownloadCalls == 1);
             Check(fixture.LastPayload.GetProperty("language").GetString() == fixture.Config.DefaultLanguage);
             Check(fixture.LastPayload.GetProperty("provider").GetString() == fixture.Config.DefaultProvider);
             Check(fixture.LastPayload.GetProperty("episodes").GetArrayLength() == 2);
@@ -80,7 +80,7 @@ internal static class CatalogScenarios
             using var searchWire = JsonDocument.Parse(JsonSerializer.Serialize(search.Value, options));
             var group = searchWire.RootElement.GetProperty("groups")[0];
             Check(group.GetProperty("source").GetString() == "moflix");
-            Check(group.GetProperty("data").GetProperty("results").GetArrayLength() == 3);
+            Check(group.GetProperty("data").GetProperty("results").GetArrayLength() == 4);
         }
     }
 
@@ -111,7 +111,7 @@ internal static class CatalogScenarios
         Check(!MediaAccessGrantStore.TryNormalizeUrl("https://megakino.test/serials/example#mkep=0", out _));
     }
 
-    internal static void GravityFallsRelevance()
+    internal static void DownloaderSearchResultsAreAuthoritative()
     {
         using var data = JsonDocument.Parse("""
             {"results":[
@@ -120,8 +120,24 @@ internal static class CatalogScenarios
               {"title":"Willkommen in Gravity Falls","url":"https://example.test/gravity","media_type":"series"}]}
             """);
         var filtered = SearchRelevance.Filter(data.RootElement, "gravity falls", "series");
-        Check(filtered.GetProperty("results").GetArrayLength() == 1);
-        Check(filtered.GetProperty("results")[0].GetProperty("title").GetString() == "Willkommen in Gravity Falls");
+        Check(filtered.GetProperty("results").GetArrayLength() == 3);
+        Check(filtered.GetProperty("results")[0].GetProperty("title").GetString() == "Cat Gravity");
+    }
+
+    internal static void SearchPreservesLargeListsAndEditions()
+    {
+        var values = Enumerable.Range(0, 150).Select(index => new
+        {
+            title = "Lokalisierter Titel " + index,
+            url = "https://example.test/shared",
+            edition = index,
+            media_type = "series",
+        }).ToArray();
+        var response = JsonSerializer.SerializeToElement(new { results = values });
+        var results = SearchRelevance.Filter(response, "original title", "series").GetProperty("results");
+        Check(results.GetArrayLength() == 150);
+        Check(results.EnumerateArray().Select(item => item.GetProperty("edition").GetInt32()).SequenceEqual(Enumerable.Range(0, 150)));
+        Check(SearchRelevance.Filter(response, "original title", "movie").GetProperty("results").GetArrayLength() == 0);
     }
 
     internal static void AliasesYearsAndEditions()
@@ -171,6 +187,9 @@ internal static class CatalogScenarios
         var duplicate = fixture.Submit();
         Check(duplicate.Disposition == SubmitDisposition.Duplicate);
         var queued = fixture.Application.ApproveAsync(request.Id, "admin", CancellationToken.None).GetAwaiter().GetResult();
+        Check(queued.Status == RequestStatuses.Ready && fixture.DownloadCalls == 0);
+        fixture.Application.ProcessReadyRequestsAsync(default).GetAwaiter().GetResult();
+        queued = fixture.Store.GetAsync(request.Id, default).GetAwaiter().GetResult()!;
         Check(queued.Status == RequestStatuses.Queued && queued.AniWorldQueueId == 77);
         fixture.Application.ApproveAsync(request.Id, "admin", CancellationToken.None).GetAwaiter().GetResult();
         Check(fixture.DownloadCalls == 1);
@@ -207,6 +226,8 @@ internal static class CatalogScenarios
         var request = fixture.Submit().Request!;
         fixture.AssetAvailable = false;
         var result = fixture.Application.ApproveAsync(request.Id, "admin", CancellationToken.None).GetAwaiter().GetResult();
+        fixture.Application.ProcessReadyRequestsAsync(default).GetAwaiter().GetResult();
+        result = fixture.Store.GetAsync(request.Id, default).GetAwaiter().GetResult()!;
         Check(result.Status == "failed" && fixture.DownloadCalls == 0);
     }
 
@@ -269,7 +290,7 @@ internal static class CatalogScenarios
         var response = fixture.Application.SearchAsync("user", "gravity falls", "all", "video", false, CancellationToken.None).GetAwaiter().GetResult();
         Check(response.Groups.Count == 3);
         Check(response.Groups.All(group => group.Error is null && group.Data!.Value.GetProperty("results").GetArrayLength() > 0));
-        Check(response.Groups.Single(group => group.Source == "moflix").Data!.Value.GetProperty("results").GetArrayLength() == 3);
+        Check(response.Groups.Single(group => group.Source == "moflix").Data!.Value.GetProperty("results").GetArrayLength() == 4);
         Check(fixture.VideoRequests.All(payload => !payload.TryGetProperty("category", out _)));
     }
 
@@ -317,7 +338,11 @@ internal static class CatalogScenarios
         selection.PlanToken = plan.PlanToken;
         var submitted = fixture.Application.SubmitAutomaticAsync("user", "User", selection, true, CancellationToken.None).GetAwaiter().GetResult();
         Check(submitted.Request!.MediaType == "manga" && submitted.Request.Status == "pending");
-        Check(submitted.Request.Episodes[0].SelectedPages!.SequenceEqual([1]));
+        Check(submitted.Request.FullSeries && submitted.Request.Episodes.Count == 0);
+        fixture.Application.ApproveAsync(submitted.Request.Id, "admin", default).GetAwaiter().GetResult();
+        fixture.Application.ProcessReadyRequestsAsync(default).GetAwaiter().GetResult();
+        var prepared = fixture.Store.GetAsync(submitted.Request.Id, default).GetAwaiter().GetResult()!;
+        Check(prepared.Episodes[0].SelectedPages!.SequenceEqual([1]));
     }
 
     private static void Check(bool value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? expression = null)
@@ -431,7 +456,9 @@ internal static class CatalogScenarios
                 ? request.RequestUri.Query.Contains("episode-2", StringComparison.Ordinal) ? new Dictionary<string, string[]> { ["English Dub"] = ["VOE"] }
                     : new Dictionary<string, string[]> { ["German Dub"] = ["VOE"], ["English Dub"] = ["VOE"] }
                 : new Dictionary<string, string[]> { ["German Dub"] = ["VOE"] } };
-            else if (path.EndsWith("/api/connector/capabilities", StringComparison.Ordinal)) data = new { protocol = 1, instance_id = "00000000000000000000000000000001", file_receipts = true, entry_options = true, video_groups = 1, max_entries = 20000, paths = new[] { new { id = (int?)null, name = "Default", path = Directory } } };
+            else if (path.EndsWith("/api/connector/capabilities", StringComparison.Ordinal)) data = new { protocol = 1, instance_id = "00000000000000000000000000000001", file_receipts = true, entry_options = true, video_groups = 1, max_entries = 20000,
+                media_targets = new { enabled = true, revision = 1, movie = 1, series = 2 },
+                paths = new[] { new { id = (int?)1, name = "Movies", path = Directory }, new { id = (int?)2, name = "Series", path = Directory } } };
             else if (path.EndsWith("/api/custom-paths", StringComparison.Ordinal)) data = new { paths = Array.Empty<object>() };
             else if (path.EndsWith("/api/download", StringComparison.Ordinal))
             {

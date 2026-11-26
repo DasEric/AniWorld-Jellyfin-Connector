@@ -59,7 +59,9 @@ public sealed class RequestStore
                 && item.Backend == request.Backend
                 && (request.Backend == "catalog"
                     ? item.Source == request.Source && item.CatalogItemId == request.CatalogItemId && item.CatalogAssetId == request.CatalogAssetId
-                    : item.SeriesUrl == request.SeriesUrl && item.Language == request.Language && item.EpisodesJson == episodesJson)
+                : item.Source == request.Source && item.SeriesUrl == request.SeriesUrl && item.Language == request.Language
+                    && item.SubtitleLanguage == request.SubtitleLanguage
+                    && (item.FullSeries && request.FullSeries || item.EpisodesJson == episodesJson))
                 && IsOpen(item));
             if (duplicate is not null)
             {
@@ -80,6 +82,9 @@ public sealed class RequestStore
 
             var item = new MediaRequest
             {
+                FullSeries = request.FullSeries,
+                ExpectedMediaType = request.ExpectedMediaType,
+                AllowProviderFallback = request.AllowProviderFallback,
                 Id = document.NextId++,
                 UserId = userId,
                 Username = username,
@@ -95,6 +100,7 @@ public sealed class RequestStore
                 SelectionLabel = request.SelectionLabel,
                 EpisodesJson = episodesJson,
                 Language = request.Language,
+                SubtitleLanguage = request.SubtitleLanguage,
                 Provider = request.Provider,
                 Status = initialStatus,
                 CreatedUtc = DateTime.UtcNow,
@@ -170,7 +176,7 @@ public sealed class RequestStore
         try
         {
             return _document.Requests
-                .Where(item => item.Status == RequestStatuses.Completed && item.LibraryScanPending)
+                .Where(item => (item.Status is RequestStatuses.Completed or RequestStatuses.Partial) && item.LibraryScanPending)
                 .Select(item => Clone(item)!)
                 .ToArray();
         }
@@ -224,13 +230,74 @@ public sealed class RequestStore
         }
     }
 
+    public async Task<IReadOnlyList<MediaRequest>> ListReadyAsync(CancellationToken token)
+    {
+        await _lock.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            return _document.Requests.Where(item => item.Status == RequestStatuses.Ready
+                && (!item.NextAttemptUtc.HasValue || item.NextAttemptUtc <= DateTime.UtcNow))
+                .OrderBy(item => item.Id).Take(2).Select(item => Clone(item)!).ToArray();
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<MediaRequest?> ScheduleAsync(long id, string decidedBy, CancellationToken token)
+    {
+        await _lock.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            var current = _document.Requests.FirstOrDefault(item => item.Id == id);
+            if (current is null || current.Status is not (RequestStatuses.Pending or RequestStatuses.Failed or RequestStatuses.Partial)) return Clone(current);
+            var document = CloneDocument();
+            var item = document.Requests.First(item => item.Id == id);
+            // A known terminal downloader job can be replaced. An ambiguous POST timeout
+            // must keep both the prepared payload and its idempotency key for replay.
+            if (item.AniWorldQueueId.HasValue)
+            {
+                item.SubmissionKey = Guid.NewGuid().ToString("N");
+                item.PreparationComplete = false;
+                item.AniWorldQueueId = null;
+            }
+            item.Status = RequestStatuses.Ready;
+            item.DecidedBy = decidedBy;
+            item.DecidedUtc = DateTime.UtcNow;
+            item.AttemptCount = 0;
+            item.NextAttemptUtc = null;
+            item.Error = null;
+            await SaveLockedAsync(document, token).ConfigureAwait(false);
+            _document = document;
+            return Clone(item);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task RecordAttemptFailureAsync(long id, string error, bool retry, bool shutdown, CancellationToken token)
+    {
+        await _lock.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            var document = CloneDocument();
+            var item = document.Requests.FirstOrDefault(item => item.Id == id);
+            if (item?.Status != RequestStatuses.Processing) return;
+            if (shutdown) item.AttemptCount = Math.Max(0, item.AttemptCount - 1);
+            item.Status = (shutdown || retry && item.AttemptCount < 5) ? RequestStatuses.Ready : RequestStatuses.Failed;
+            item.NextAttemptUtc = item.Status == RequestStatuses.Ready
+                ? DateTime.UtcNow.AddSeconds(shutdown ? 0 : Math.Min(300, 5 * Math.Pow(2, item.AttemptCount - 1))) : null;
+            item.Error = error;
+            await SaveLockedAsync(document, token).ConfigureAwait(false);
+            _document = document;
+        }
+        finally { _lock.Release(); }
+    }
+
     public async Task<bool> TryClaimAsync(long id, CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var current = _document.Requests.FirstOrDefault(candidate => candidate.Id == id);
-            if (current is null || current.Status is not (RequestStatuses.Pending or RequestStatuses.Failed))
+            if (current is null || current.Status != RequestStatuses.Ready || current.NextAttemptUtc > DateTime.UtcNow)
             {
                 return false;
             }
@@ -240,6 +307,8 @@ public sealed class RequestStore
             if (item.Status == RequestStatuses.Failed && item.AniWorldQueueId.HasValue)
                 item.SubmissionKey = Guid.NewGuid().ToString("N");
             item.Status = RequestStatuses.Processing;
+            item.AttemptCount++;
+            item.NextAttemptUtc = null;
             item.Error = null;
             await SaveLockedAsync(document, cancellationToken).ConfigureAwait(false);
             _document = document;
@@ -277,7 +346,8 @@ public sealed class RequestStore
         string mediaType,
         string selectionLabel,
         IReadOnlyList<AniWorldDownloadItem> episodes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int unavailableCount = 0)
     {
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -294,6 +364,8 @@ public sealed class RequestStore
             item.MediaType = mediaType;
             item.SelectionLabel = selectionLabel;
             item.EpisodesJson = JsonSerializer.Serialize(episodes);
+            item.UnavailableCount = unavailableCount;
+            item.PreparationComplete = true;
             await SaveLockedAsync(document, cancellationToken).ConfigureAwait(false);
             _document = document;
             return true;
@@ -410,6 +482,7 @@ public sealed class RequestStore
 
                 var (status, error) = queueStatus switch
                 {
+                    RequestStatuses.Completed when item.UnavailableCount > 0 => (RequestStatuses.Partial, $"{item.UnavailableCount} Inhalte fehlen weiterhin in der gewählten Sprache."),
                     RequestStatuses.Completed => (RequestStatuses.Completed, (string?)null),
                     RequestStatuses.Partial => (RequestStatuses.Partial, "AniWorld hat den Download nur teilweise abgeschlossen."),
                     RequestStatuses.Failed => (RequestStatuses.Failed, "AniWorld konnte den Download nicht abschlie\u00dfen."),
@@ -423,7 +496,7 @@ public sealed class RequestStore
 
                 item.Status = status;
                 item.Error = error;
-                if (status == RequestStatuses.Completed)
+                if (status is RequestStatuses.Completed or RequestStatuses.Partial)
                 {
                     item.LibraryScanPending = item.MediaType is "movie" or "series";
                 }
@@ -457,7 +530,7 @@ public sealed class RequestStore
         try
         {
             if (!_document.Requests.Any(item => ids.Contains(item.Id)
-                    && item.Status == RequestStatuses.Completed
+                    && (item.Status is RequestStatuses.Completed or RequestStatuses.Partial)
                     && item.LibraryScanPending))
             {
                 return;
@@ -466,7 +539,7 @@ public sealed class RequestStore
             var document = CloneDocument();
             var triggeredUtc = DateTime.UtcNow;
             foreach (var item in document.Requests.Where(item => ids.Contains(item.Id)
-                         && item.Status == RequestStatuses.Completed
+                         && (item.Status is RequestStatuses.Completed or RequestStatuses.Partial)
                          && item.LibraryScanPending))
             {
                 item.LibraryScanPending = false;
@@ -535,8 +608,10 @@ public sealed class RequestStore
             }
             foreach (var interrupted in loaded.Requests.Where(item => item.Status == RequestStatuses.Processing))
             {
-                interrupted.Status = RequestStatuses.Failed;
-                interrupted.Error = "Die \u00dcbergabe wurde durch einen Jellyfin-Neustart unterbrochen und kann erneut versucht werden.";
+                interrupted.Status = interrupted.AttemptCount < 5 ? RequestStatuses.Ready : RequestStatuses.Failed;
+                interrupted.Error = interrupted.Status == RequestStatuses.Ready
+                    ? "Die Verarbeitung wird nach dem Jellyfin-Neustart fortgesetzt."
+                    : "Die Verarbeitung wurde wiederholt unterbrochen. Bitte die Anfrage prüfen und erneut freigeben.";
                 interrupted.DecidedUtc = DateTime.UtcNow;
                 interrupted.DecidedBy = "recovery";
             }
@@ -625,7 +700,7 @@ public sealed class RequestStore
     }
 
     private static bool IsOpen(MediaRequest item)
-        => item.Status is RequestStatuses.Pending or RequestStatuses.Processing or RequestStatuses.Queued;
+        => item.Status is RequestStatuses.Pending or RequestStatuses.Ready or RequestStatuses.Processing or RequestStatuses.Queued;
 
     private static void ApplyDecision(MediaRequest item, string status, string decidedBy, long? queueId, string? error)
     {

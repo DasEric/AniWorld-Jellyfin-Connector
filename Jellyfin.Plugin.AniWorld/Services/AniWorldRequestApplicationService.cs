@@ -475,8 +475,26 @@ public sealed partial class AniWorldRequestApplicationService
         CancellationToken cancellationToken)
         => _store.TryRejectAsync(id, reason, decidedBy, cancellationToken);
 
-    public Task<MediaRequest> ApproveAsync(long id, string decidedBy, CancellationToken cancellationToken)
-        => QueueRequestAsync(id, decidedBy, cancellationToken, refreshAvailability: true);
+    public async Task<MediaRequest> ApproveAsync(long id, string decidedBy, CancellationToken cancellationToken)
+    {
+        if (CurrentConfiguration.MaintenanceMode)
+            throw new AniWorldApplicationException(HttpStatusCode.ServiceUnavailable, "Neue Übergaben sind vorübergehend deaktiviert.");
+        var current = await _store.GetAsync(id, cancellationToken).ConfigureAwait(false)
+            ?? throw new AniWorldApplicationException(HttpStatusCode.NotFound, "Anfrage nicht gefunden.");
+        var allowed = (CurrentConfiguration.AllowedSources ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (!MediaCategories.IsAllowed(current.MediaType, CurrentConfiguration)
+            || allowed.Length > 0 && !allowed.Contains(current.Source, StringComparer.OrdinalIgnoreCase)) throw SourceNotAllowed();
+        return await _store.ScheduleAsync(id, decidedBy, cancellationToken).ConfigureAwait(false)
+            ?? throw new AniWorldApplicationException(HttpStatusCode.NotFound, "Anfrage nicht gefunden.");
+    }
+
+    internal async Task ProcessReadyRequestsAsync(CancellationToken cancellationToken)
+    {
+        if (CurrentConfiguration.MaintenanceMode) return;
+        var ready = await _store.ListReadyAsync(cancellationToken).ConfigureAwait(false);
+        await Task.WhenAll(ready.Select(request => QueueRequestAsync(request.Id,
+            request.DecidedBy ?? "automatic", cancellationToken))).ConfigureAwait(false);
+    }
 
     private async Task<SubmitMediaRequestResult> SubmitCoreAsync(
         string userId,
@@ -498,74 +516,43 @@ public sealed partial class AniWorldRequestApplicationService
         }
 
         var config = CurrentConfiguration;
-        if (config.MaintenanceMode)
-        {
-            throw new AniWorldApplicationException(
-                HttpStatusCode.ServiceUnavailable,
-                string.IsNullOrWhiteSpace(config.MaintenanceMessage)
-                    ? "Anfragen sind derzeit deaktiviert."
-                    : SafeText(config.MaintenanceMessage, 500, "Anfragen sind derzeit deaktiviert."));
-        }
+        if (config.MaintenanceMode) throw MaintenanceActive(config);
 
         if (!rateLimitAlreadyApplied && !Allow(userId, "request", 10))
         {
             throw TooManyRequests();
         }
 
-        if (!await SourceIsAllowedAsync(userId, request.Source, request.MediaType, cancellationToken).ConfigureAwait(false))
-        {
-            throw SourceNotAllowed();
-        }
-
-        MissingMediaPlan plan;
-        if (!string.IsNullOrWhiteSpace(request.PlanToken))
-        {
-            var previous = SelectVariant(ConsumePlan(userId, request), request.Language, request.Provider);
-            plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant, refreshOffers: true).ConfigureAwait(false);
-            var approvedUrls = previous.MissingItems.Select(item => item.Url).ToHashSet(StringComparer.Ordinal);
-            if (plan.MissingItems.Any(item => !approvedUrls.Contains(item.Url))) throw DownloadOptionsChanged();
-        }
-        else
-        {
-            plan = await BuildMissingPlanAsync(userId, request, cancellationToken, requireGrant, refreshOffers: true).ConfigureAwait(false);
-        }
-        if (expectedMediaType is not null
-            && !string.Equals(plan.IsMovie ? "movie" : "series", expectedMediaType, StringComparison.Ordinal))
-        {
-            throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Der gefundene Medientyp stimmt nicht mit der Auswahl überein.");
-        }
-
-        if (plan.UnavailableCount > 0 && !request.AllowPartial)
-            throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Die Sprache ist nicht für alle fehlenden Inhalte bestätigt. Bitte den Teilumfang ausdrücklich bestätigen.");
-        if (plan.MissingItems.Count == 0 && plan.UnavailableCount > 0) throw NoProviderAvailable();
-        if (plan.MissingItems.Count == 0)
-        {
-            return new SubmitMediaRequestResult(SubmitDisposition.AlreadyAvailable, null, null, 0);
-        }
-
-        var downloadOptions = ResolveDownloadOptions(
-            plan,
-            request.Language,
-            request.Provider,
-            allowOptionFallback);
-
+        // Admission is local and durable. Remote capability checks and complete episode
+        // planning happen in the worker, not on the browser's request lifetime.
+        var allowedSources = (config.AllowedSources ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (!MediaCategories.IsAllowed(request.MediaType, config)
+            || allowedSources.Length > 0 && !allowedSources.Contains(request.Source, StringComparer.OrdinalIgnoreCase)) throw SourceNotAllowed();
+        if (requireGrant && (!_grants.IsGranted(userId, request.SeriesUrl, out var grantedSource) || grantedSource != request.Source))
+            throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Bitte den Titel erneut über die Suche öffnen.");
+        // A preview is advisory: the full-series intent includes newly available episodes too.
+        // Validate its ownership when present, without performing any upstream I/O.
+        if (!string.IsNullOrWhiteSpace(request.PlanToken)) ConsumePlan(userId, request);
         var calculated = new CreateMediaRequest
         {
-            Title = plan.Title,
+            FullSeries = true,
+            ExpectedMediaType = expectedMediaType,
+            AllowProviderFallback = allowOptionFallback,
+            Title = request.Title,
             SeriesUrl = request.SeriesUrl,
             Source = request.Source,
-            MediaType = request.Source == "mangafire" ? "manga" : plan.IsMovie ? "movie" : "series",
-            SelectionLabel = plan.SelectionLabel,
-            Episodes = plan.MissingItems.ToList(),
-            Language = downloadOptions.Language,
-            Provider = downloadOptions.Provider,
+            MediaType = request.MediaType,
+            SelectionLabel = "Alle verfügbaren fehlenden Inhalte in der gewählten Sprache",
+            Language = request.Language,
+            SubtitleLanguage = request.SubtitleLanguage,
+            Provider = request.Provider,
         };
         var maxPending = Math.Clamp(config.MaxPendingRequestsPerUser, 1, 100);
         var addResult = await _store.TryAddAsync(
             userId,
             username,
             calculated,
-            RequestStatuses.Pending,
+            config.AutoApproveRequests ? RequestStatuses.Ready : RequestStatuses.Pending,
             maxPending,
             cancellationToken).ConfigureAwait(false);
         if (addResult.Duplicate is not null)
@@ -585,31 +572,17 @@ public sealed partial class AniWorldRequestApplicationService
 
         var stored = addResult.Request
             ?? throw new InvalidOperationException("Request store returned no result.");
-        if (!config.AutoApproveRequests)
-        {
-            return new SubmitMediaRequestResult(SubmitDisposition.Stored, stored, null, maxPending);
-        }
-
-        var queued = await QueueRequestAsync(stored.Id, "automatic", cancellationToken).ConfigureAwait(false);
-        return new SubmitMediaRequestResult(
-            queued.Status == RequestStatuses.Queued ? SubmitDisposition.Queued : SubmitDisposition.QueueFailed,
-            queued,
-            null,
-            maxPending);
+        return new SubmitMediaRequestResult(SubmitDisposition.Stored, stored, null, maxPending);
     }
-
     private async Task<MediaRequest> QueueRequestAsync(
         long id,
         string decidedBy,
-        CancellationToken cancellationToken,
-        bool refreshAvailability = false)
+        CancellationToken cancellationToken)
     {
         var existing = await _store.GetAsync(id, cancellationToken).ConfigureAwait(false);
         if (existing is null) throw new AniWorldApplicationException(HttpStatusCode.NotFound, "Anfrage nicht gefunden.");
         if (CurrentConfiguration.MaintenanceMode)
             throw new AniWorldApplicationException(HttpStatusCode.ServiceUnavailable, "Neue Übergaben sind vorübergehend deaktiviert.");
-        if (!await SourceIsAllowedAsync(existing.UserId, existing.Source, existing.MediaType, cancellationToken).ConfigureAwait(false))
-            throw SourceNotAllowed();
         if (!await _store.TryClaimAsync(id, cancellationToken).ConfigureAwait(false))
         {
             return await _store.GetAsync(id, cancellationToken).ConfigureAwait(false)
@@ -631,7 +604,7 @@ public sealed partial class AniWorldRequestApplicationService
                 throw SourceNotAllowed();
             }
 
-            if (refreshAvailability)
+            if (!request.PreparationComplete)
             {
                 var refreshedPlan = await BuildMissingPlanAsync(
                     request.UserId,
@@ -642,14 +615,21 @@ public sealed partial class AniWorldRequestApplicationService
                         Source = request.Source,
                         MediaType = request.MediaType,
                         Language = request.Language,
+                        SubtitleLanguage = request.SubtitleLanguage,
                         Provider = request.Provider,
                     },
                     cancellationToken,
                     requireGrant: false, refreshOffers: true).ConfigureAwait(false);
-                if (refreshedPlan.Variants.TryGetValue(request.Language, out var checkedVariant)
+                if (!request.FullSeries && refreshedPlan.Variants.TryGetValue(request.Language, out var checkedVariant)
                     && request.Episodes.Any(item => checkedVariant.UnavailableUrls.Contains(item.Url))) throw DownloadOptionsChanged();
-                var approved = request.Episodes.Select(item => item.Url).ToHashSet(StringComparer.Ordinal);
-                refreshedPlan = refreshedPlan with { MissingItems = refreshedPlan.MissingItems.Where(item => approved.Contains(item.Url)).ToArray() };
+                if (!request.FullSeries)
+                {
+                    var approved = request.Episodes.Select(item => item.Url).ToHashSet(StringComparer.Ordinal);
+                    refreshedPlan = refreshedPlan with { MissingItems = refreshedPlan.MissingItems.Where(item => approved.Contains(item.Url)).ToArray() };
+                }
+                if (request.ExpectedMediaType is not null && request.ExpectedMediaType != (refreshedPlan.IsMovie ? "movie" : "series"))
+                    throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Der Inhaltstyp stimmt nicht mit der Anfrage überein.");
+                if (refreshedPlan.MissingItems.Count == 0 && refreshedPlan.UnavailableCount > 0) throw NoProviderAvailable();
                 if (refreshedPlan.MissingItems.Count == 0)
                 {
                     await _store.MarkAvailableAsync(id, decidedBy, CancellationToken.None).ConfigureAwait(false);
@@ -660,7 +640,7 @@ public sealed partial class AniWorldRequestApplicationService
                     refreshedPlan,
                     request.Language,
                     request.Provider,
-                    allowFallback: false);
+                    allowFallback: request.AllowProviderFallback);
 
                 if (!await _store.TryUpdateProcessingPlanAsync(
                         id,
@@ -668,7 +648,8 @@ public sealed partial class AniWorldRequestApplicationService
                         request.Source == "mangafire" ? "manga" : refreshedPlan.IsMovie ? "movie" : "series",
                         refreshedPlan.SelectionLabel,
                         refreshedPlan.MissingItems,
-                        CancellationToken.None).ConfigureAwait(false))
+                        CancellationToken.None,
+                        refreshedPlan.UnavailableCount).ConfigureAwait(false))
                 {
                     return await _store.GetAsync(id, CancellationToken.None).ConfigureAwait(false) ?? request;
                 }
@@ -683,7 +664,7 @@ public sealed partial class AniWorldRequestApplicationService
                 : null;
             await _store.MarkQueuedAsync(id, queueResult.QueueId, decidedBy, warning, CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException or HttpRequestException or OperationCanceledException)
+        catch (Exception exception)
         {
             var error = exception switch
             {
@@ -691,7 +672,18 @@ public sealed partial class AniWorldRequestApplicationService
                 AniWorldApplicationException applicationException => applicationException.Message,
                 _ => "Die Übergabe an AniWorld wurde unterbrochen.",
             };
-            await _store.MarkFailedAsync(id, error, decidedBy, CancellationToken.None).ConfigureAwait(false);
+            var status = exception switch
+            {
+                AniWorldException upstream => upstream.StatusCode,
+                AniWorldApplicationException application => application.StatusCode,
+                HttpRequestException or OperationCanceledException => HttpStatusCode.ServiceUnavailable,
+                _ => HttpStatusCode.Conflict,
+            };
+            var retry = status is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests
+                or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout
+                or HttpStatusCode.InternalServerError;
+            await _store.RecordAttemptFailureAsync(id, error, retry,
+                exception is OperationCanceledException && cancellationToken.IsCancellationRequested, CancellationToken.None).ConfigureAwait(false);
         }
 
         return await _store.GetAsync(id, CancellationToken.None).ConfigureAwait(false) ?? request;
@@ -1231,6 +1223,11 @@ public sealed partial class AniWorldRequestApplicationService
 
     internal static string? ValidateAutomaticRequest(AutomaticMediaRequest request, bool requireOptions)
     {
+        if (request.SubtitleLanguage is not ("none" or "deu")) return "Untertitel müssen 'none' oder 'deu' sein.";
+        // Mirrors the downloader: soft subtitles exist for SerienStream shows and ZDF titles.
+        if (request.SubtitleLanguage != "none"
+            && !(request.Source == "zdf" || request.Source == "sto" && request.MediaType == "series"))
+            return "Zusätzliche Untertitel sind hier nur für SerienStream-Serien und ZDF verfügbar.";
         if (NormalizeMediaType(request.MediaType) is null) return "Ungültige Kategorie.";
         if (string.IsNullOrWhiteSpace(request.Title)
             || string.IsNullOrWhiteSpace(request.SeriesUrl)
@@ -1268,6 +1265,7 @@ public sealed partial class AniWorldRequestApplicationService
         request.Source = request.Source?.Trim().ToLowerInvariant() ?? string.Empty;
         request.MediaType = NormalizeMediaType(request.MediaType) ?? string.Empty;
         request.Language = request.Language?.Trim() ?? string.Empty;
+        request.SubtitleLanguage = string.IsNullOrWhiteSpace(request.SubtitleLanguage) ? "none" : request.SubtitleLanguage.Trim().ToLowerInvariant();
         request.Provider = request.Provider?.Trim() ?? string.Empty;
         request.PlanToken = request.PlanToken?.Trim() ?? string.Empty;
     }
@@ -1332,6 +1330,12 @@ public sealed partial class AniWorldRequestApplicationService
 
     private static AniWorldApplicationException TooManyRequests()
         => new(HttpStatusCode.TooManyRequests, "Zu viele Anfragen. Bitte kurz warten.");
+
+    /// <summary>The admin's maintenance text; nothing can be requested or handed over meanwhile.</summary>
+    internal static AniWorldApplicationException MaintenanceActive(PluginConfiguration config)
+        => new(HttpStatusCode.ServiceUnavailable, string.IsNullOrWhiteSpace(config.MaintenanceMessage)
+            ? "Anfragen sind derzeit deaktiviert."
+            : SafeText(config.MaintenanceMessage, 500, "Anfragen sind derzeit deaktiviert."));
 
     private static AniWorldApplicationException SourceNotAllowed()
         => new(HttpStatusCode.BadRequest, "Die angegebene AniWorld-Quelle ist nicht freigegeben oder deaktiviert.");
@@ -1468,6 +1472,7 @@ public sealed partial class AniWorldRequestApplicationService
             userId,
             request.Source,
             normalizedUrl,
+            request.SubtitleLanguage,
             now.Add(PlanLifetime),
             cachedPlan);
         return cachedPlan;
@@ -1475,7 +1480,7 @@ public sealed partial class AniWorldRequestApplicationService
 
     private MissingMediaPlan ConsumePlan(string userId, AutomaticMediaRequest request)
     {
-        if (!_plans.TryRemove(request.PlanToken, out var cached)
+        if (!_plans.TryGetValue(request.PlanToken, out var cached)
             || cached.ExpiresUtc <= DateTime.UtcNow)
         {
             throw new AniWorldApplicationException(
@@ -1489,6 +1494,7 @@ public sealed partial class AniWorldRequestApplicationService
         if (!string.Equals(cached.UserId, userId, StringComparison.Ordinal)
             || !string.Equals(cached.Source, request.Source, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(cached.SeriesUrl, normalizedUrl, StringComparison.Ordinal)
+            || cached.SubtitleLanguage != request.SubtitleLanguage
             || !string.Equals(request.Source == "mangafire" ? "manga" : cached.Plan.IsMovie ? "movie" : "series", request.MediaType, StringComparison.Ordinal))
         {
             throw new AniWorldApplicationException(
@@ -1507,6 +1513,7 @@ public sealed partial class AniWorldRequestApplicationService
         string UserId,
         string Source,
         string SeriesUrl,
+        string SubtitleLanguage,
         DateTime ExpiresUtc,
         MissingMediaPlan Plan);
 }
