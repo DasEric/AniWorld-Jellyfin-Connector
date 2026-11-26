@@ -60,9 +60,8 @@
   function updateOverlayOffset() {
     const overlay = getOverlay();
     if (!overlay) return;
-    const appBar = findAppBar();
-    const rect = appBar && appBar.getBoundingClientRect ? appBar.getBoundingClientRect() : null;
-    overlay.style.top = Math.max(0, Math.ceil(rect && rect.bottom || 0)) + 'px';
+    // Full screen: the requests page covers the Jellyfin app bar instead of sitting below it.
+    overlay.style.top = '0px';
   }
   function observeAppBar() {
     if (appBarObserver) appBarObserver.disconnect();
@@ -149,8 +148,8 @@
     overlay.id = MODAL_ID;
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-label', 'AniWorld Anfragen');
-    overlay.style.cssText = 'position:fixed!important;right:0!important;bottom:0!important;left:0!important;z-index:1400!important;background:#181818!important;overflow:auto!important;overscroll-behavior:contain;';
-    overlay.innerHTML = '<div style="position:sticky;top:0;z-index:5;display:flex;justify-content:flex-end;padding:.5rem;background:#111;border-bottom:1px solid #333"><button type="button" data-aniworld-close aria-label="AniWorld Anfragen schließen" style="min-width:2.75rem;min-height:2.75rem;border:0;background:transparent;color:#fff;font-size:2rem;line-height:1;cursor:pointer">×</button></div><div data-content><div style="padding:3rem;text-align:center">Laden…</div></div>';
+    overlay.style.cssText = 'position:fixed!important;right:0!important;bottom:0!important;left:0!important;z-index:10000!important;background:#0a0a0f!important;overflow:auto!important;overscroll-behavior:contain;';
+    overlay.innerHTML = '<div style="position:sticky;top:0;z-index:5;display:flex;justify-content:flex-end;padding:.5rem;padding-top:max(.5rem,env(safe-area-inset-top));background:rgba(10,10,15,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.08)"><button type="button" data-aniworld-close aria-label="AniWorld Anfragen schließen" style="min-width:2.75rem;min-height:2.75rem;border:0;background:transparent;color:#fff;font-size:2rem;line-height:1;cursor:pointer">×</button></div><div data-content><div style="padding:3rem;text-align:center">Laden…</div></div>';
     const closeButton = overlay.querySelector('[data-aniworld-close]');
     closeButton.addEventListener('click', function () { closeRequests(true); });
     document.body.appendChild(overlay);

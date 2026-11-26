@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2.1.0
+
+- **Neuer Tab „Meine Medien“:** Jeder Benutzer sieht seine selbst angefragten Filme und Serien als Cover-Raster wie bei der Suche, mit Dateianzahl und Größe. Ein Klick öffnet eine Sicherheitsabfrage mit allen betroffenen Dateien. Erst nach Bestätigung werden die Dateien gelöscht und Jellyfin aktualisiert die Bibliothek, sodass Speicher frei wird.
+- **Nur eigene Inhalte:** Liste, Vorschau und Löschen prüfen serverseitig den Besitz. Benutzer sehen und löschen ausschließlich Downloads, die sie selbst angefragt haben. Folgen anderer Benutzer bleiben erhalten. Das Cover stammt aus der Jellyfin-Bibliothek und dient nur der Anzeige.
+- **Vollbild:** Der Anfragenbereich überdeckt jetzt die Jellyfin-Kopfleiste, statt darunter zu beginnen.
+- Die Download-Liste wurde aus „Meine Anfragen“ in den neuen Tab verschoben.
+
 ## 2.0.1
 
 - **Anfragen-Seite:** Die Anfragen-Seite aus der oberen Navigation wird wieder im H0melab-Design angezeigt. Das Overlay hatte den Seitencontainer verworfen, an dem alle Styles hängen, und zeigte deshalb unformatiertes HTML.

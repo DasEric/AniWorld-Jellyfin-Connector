@@ -38,6 +38,8 @@ public sealed class DownloadManagementService
             var artifacts = files.Where(file => keys.Contains(file.RequestKey) && file.State != "deleted").ToArray();
             return new { id = group.First().RequestKey, title = group.First().Title, mediaType = group.First().MediaType,
                 ownerId = admin ? group.Key.OwnerId : null,
+                // Display-only poster lookup. Deletion never uses it; ownership stays the only authority.
+                imageItemId = CoverItemId(group.First().Title, group.First().MediaType),
                 files = artifacts.Select(file => new { id = file.Id, name = file.Name, language = file.Language, state = file.State,
                     size = file.Size, mediaType = file.MediaType, streams = file.Streams, verification = file.Verification,
                     subtitleLanguage = subtitles[file.RequestKey], subtitleVerification = file.VerifySubtitle(subtitles[file.RequestKey]) }).ToArray(),
@@ -72,6 +74,28 @@ public sealed class DownloadManagementService
         if (files.Any(file => preview.Ids.Contains(file.Id, StringComparer.Ordinal) && file.MediaType == "movie")) _tasks?.QueueScheduledTask<AniWorldMovieLibraryScanTask>();
         if (files.Any(file => preview.Ids.Contains(file.Id, StringComparer.Ordinal) && file.MediaType == "series")) _tasks?.QueueScheduledTask<AniWorldSeriesLibraryScanTask>();
         return result;
+    }
+
+    private Guid? CoverItemId(string title, string mediaType)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        try
+        {
+            var trimmed = title.Trim();
+            var matches = _library.GetItemList(new InternalItemsQuery { Recursive = true,
+                    IncludeItemTypes = [mediaType == "series" ? BaseItemKind.Series : BaseItemKind.Movie],
+                    SearchTerm = trimmed.Length > 120 ? trimmed[..120] : trimmed, IsVirtualItem = false, Limit = 20, EnableTotalRecordCount = false })
+                ?.Where(item => string.Equals(item.Name?.Trim(), trimmed, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(item.OriginalTitle?.Trim(), trimmed, StringComparison.OrdinalIgnoreCase))
+                .Take(2).ToArray();
+            // Ambiguous titles show the placeholder instead of a possibly wrong poster.
+            return matches is { Length: 1 } ? matches[0].Id : null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A poster is optional; a library lookup failure must never hide own media.
+            return null;
+        }
     }
 
     public object ListLibrary(string query)

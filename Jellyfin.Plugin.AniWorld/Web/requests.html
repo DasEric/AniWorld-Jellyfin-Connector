@@ -81,6 +81,13 @@
     @media(max-width:650px){#AniWorldRequestsPage .mf-maintenance{padding:16px;gap:12px}#AniWorldRequestsPage .mf-maintenance-icon{width:36px;height:36px;font-size:1.3rem}}
     #AniWorldRequestsPage .mf-sectionhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:32px 0 16px}
     #AniWorldRequestsPage .mf-panel>.mf-sectionhead:first-child{margin-top:0}
+    #AniWorldRequestsPage .mf-mediagrid{margin-top:16px}
+    #AniWorldRequestsPage .mf-mediacard{position:relative}
+    #AniWorldRequestsPage .mf-mediacard .mf-mediadelete{position:absolute;top:10px;right:10px;padding:6px 10px;border-radius:8px;background:rgba(239,68,68,.85);color:#fff;font-size:.75rem;font-weight:700;opacity:0;transition:opacity .2s;pointer-events:none}
+    #AniWorldRequestsPage .mf-mediacard:is(:hover,:focus-visible) .mf-mediadelete{opacity:1}
+    #AniWorldRequestsPage .mf-mediacard.locked{cursor:default}
+    #AniWorldRequestsPage .mf-mediacard.locked:hover{transform:none}
+    @media (hover:none){#AniWorldRequestsPage .mf-mediacard .mf-mediadelete{opacity:1}}
     #AniWorldRequestsPage .mf-sectionhead h3{margin:0;font-size:1.05rem;font-weight:600;color:#fff}
     #AniWorldRequestsPage .mf-sectionhead+.mf-muted{margin:-8px 0 16px}
     #AniWorldRequestsPage .mf-btn.small{min-height:36px;padding:7px 14px;font-size:.8rem}
@@ -120,6 +127,7 @@
     <nav class="mf-tabs">
       <button class="mf-tab active" data-tab="search" type="button">Suche</button>
       <button class="mf-tab" data-tab="mine" type="button">Meine Anfragen</button>
+      <button class="mf-tab" data-tab="media" type="button">Meine Medien</button>
       <button class="mf-tab" data-tab="admin" type="button" style="display:none">Admin</button>
     </nav>
     <section class="mf-panel active" data-panel="search">
@@ -134,9 +142,11 @@
     <section class="mf-panel" data-panel="mine">
       <div class="mf-sectionhead"><h3>Meine Anfragen</h3><button class="mf-btn secondary small" data-mf="refresh-mine" type="button">Aktualisieren</button></div>
       <div class="mf-list" data-mf="mine"></div>
-      <div class="mf-sectionhead"><h3>Meine Downloads</h3></div>
-      <p class="mf-muted">Du kannst nur nachweislich selbst heruntergeladene Dateien löschen. Fremde Folgen bleiben erhalten.</p>
-      <div class="mf-list" data-mf="downloads"></div>
+    </section>
+    <section class="mf-panel" data-panel="media">
+      <div class="mf-sectionhead"><h3>Meine Medien</h3><button class="mf-btn secondary small" data-mf="refresh-media" type="button">Aktualisieren</button></div>
+      <p class="mf-muted">Hier siehst du nur Filme und Serien, die du selbst angefragt hast. Tippe auf einen Titel, um ihn aus Jellyfin zu löschen und Speicher freizugeben. Folgen, die andere angefragt haben, bleiben erhalten.</p>
+      <div class="mf-results mf-mediagrid" data-mf="downloads"></div>
     </section>
     <section class="mf-panel" data-panel="admin">
       <div class="mf-sectionhead"><h3>Anfragen verwalten</h3><button class="mf-btn secondary small" data-mf="refresh-admin" type="button">Aktualisieren</button></div>

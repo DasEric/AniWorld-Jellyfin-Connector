@@ -82,6 +82,12 @@ export default function (view, params) {
     view.querySelectorAll('.mf-panel').forEach((p) => p.classList.toggle('active', p.dataset.panel === name));
     if (name === 'mine') loadMine({ initial: !mineRendered });
     if (name === 'admin') loadAdmin();
+    if (name === 'media') loadMedia();
+  }
+  function loadMedia() {
+    if (disposed || !view.isConnected) return;
+    if (!q('downloads').children.length) q('downloads').innerHTML = '<div class="mf-empty">Laden…</div>';
+    loadDownloads(false);
   }
   view.querySelectorAll('.mf-tab').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
@@ -478,7 +484,6 @@ export default function (view, params) {
       const hasActiveDownload = items.some((item) => ['ready', 'processing', 'queued'].includes(item.status))
         || progress.some((item) => item.status === 'queued' || item.status === 'running');
       scheduleMineRefresh(hasActiveDownload);
-      if (initial || !hasActiveDownload) loadDownloads(false);
     } catch (error) {
       if (disposed || !view.isConnected) return;
       if (!mineRendered) emptyLine(q('mine'), error.message);
@@ -503,6 +508,7 @@ export default function (view, params) {
       const groups = await call(admin ? 'Admin/Downloads' : 'Downloads/Mine');
       if (disposed || !view.isConnected) return;
       host.replaceChildren();
+      if (!admin) { renderMedia(host, groups); return; }
       if (!groups.length) emptyLine(host, 'Noch keine nachweislich zugeordneten Downloads vorhanden.');
       groups.forEach((group) => {
         const card = document.createElement('article'); card.className = 'mf-request';
@@ -535,14 +541,60 @@ export default function (view, params) {
       });
     } catch (error) { if (!disposed && view.isConnected) emptyLine(host, error.message); }
   }
+  function formatSize(bytes) {
+    const value = Number(bytes) || 0;
+    if (value <= 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']; let size = value; let unit = 0;
+    while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+    return size.toLocaleString('de-DE', { maximumFractionDigits: unit >= 3 ? 1 : 0 }) + ' ' + units[unit];
+  }
+  function mediaCover(itemId) {
+    if (!itemId || !api) return '';
+    try {
+      return typeof api.getImageUrl === 'function'
+        ? api.getImageUrl(itemId, { type: 'Primary', maxHeight: 480, quality: 90 })
+        : api.getUrl('Items/' + encodeURIComponent(itemId) + '/Images/Primary', { maxHeight: 480, quality: 90 });
+    } catch (error) { return ''; }
+  }
+  // Own media only: the server lists exclusively downloads whose ownership belongs to
+  // this Jellyfin user, and preview/delete re-check that ownership on every call.
+  function renderMedia(host, groups) {
+    if (!groups.length) { emptyLine(host, 'Du hast noch keine eigenen Filme oder Serien heruntergeladen.'); return; }
+    groups.forEach((group) => {
+      const card = document.createElement('article'); card.className = 'mf-card mf-mediacard';
+      const total = group.files.reduce((sum, file) => sum + (Number(file.size) || 0), 0);
+      const src = mediaCover(group.imageItemId);
+      if (src) {
+        const cover = document.createElement('img'); cover.className = 'mf-cover'; cover.loading = 'lazy'; cover.alt = '';
+        cover.onerror = () => cover.remove(); cover.src = src; card.appendChild(cover);
+      }
+      const body = document.createElement('div'); body.className = 'mf-cardbody';
+      const title = document.createElement('div'); title.className = 'mf-cardtitle'; title.textContent = group.title;
+      const meta = document.createElement('div'); meta.className = 'mf-source';
+      meta.textContent = [group.mediaType === 'series' ? 'Serie' : 'Film',
+        group.files.length === 1 ? '1 Datei' : group.files.length + ' Dateien', formatSize(total)].filter(Boolean).join(' · ');
+      body.append(title, meta); card.appendChild(body);
+      if (group.canDelete) {
+        const badge = document.createElement('span'); badge.className = 'mf-mediadelete'; badge.textContent = 'Löschen'; card.appendChild(badge);
+        card.tabIndex = 0; card.setAttribute('role', 'button'); card.setAttribute('aria-label', group.title + ' löschen');
+        const open = () => deleteDownload('Downloads', group.id, false);
+        card.addEventListener('click', open);
+        card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+      } else {
+        card.classList.add('locked'); card.title = 'Diese Dateien können gerade nicht gelöscht werden.';
+      }
+      host.appendChild(card);
+    });
+  }
   async function deleteDownload(base, id, admin) {
     try {
       const preview = await call(base + '/' + encodeURIComponent(id) + '/Preview', { method: 'POST' });
       if (disposed || !view.isConnected) return;
       state.deletion = { base, admin, token: preview.token, running: false };
-      q('delete-title').textContent = preview.title;
+      const total = formatSize((preview.files || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0));
+      q('delete-title').textContent = admin ? preview.title : '„' + preview.title + '“ wirklich löschen?';
       q('delete-message').textContent = preview.message;
-      q('delete-count').textContent = preview.count + ' Dateien werden endgültig entfernt:';
+      q('delete-count').textContent = preview.count + ' Dateien' + (total ? ' (' + total + ')' : '') + ' werden endgültig aus Jellyfin entfernt:';
       q('delete-files').replaceChildren();
       preview.files.forEach((file) => { const row = document.createElement('li'); row.textContent = file.name; q('delete-files').appendChild(row); });
       q('delete-progress').textContent = '';
@@ -670,7 +722,8 @@ export default function (view, params) {
   }
   function progressDetail(progress) { const phase = ({ download: 'Download', ffmpeg: 'Verarbeitung' })[progress.phase] || 'Download'; const episodes = progress.total_episodes > 1 ? ' · ' + progress.current_episode + '/' + progress.total_episodes + ' Episoden' : ''; return phase + ': ' + Math.round(Number(progress.percent) || 0) + '%' + episodes; }
   function statusLabel(status) { return ({ pending: 'Wartet auf Freigabe', ready: 'Wartet auf Vorbereitung', processing: 'Wird vorbereitet', queued: 'Wartet auf Download', completed: 'Fertig', available: 'Bereits in Jellyfin vorhanden', partial: 'Teilweise fertig', cancelled: 'Abgebrochen', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen', failed: 'Fehlgeschlagen' })[status] || status; }
-  q('refresh-mine').addEventListener('click', () => { loadMine({ initial: !mineRendered }); loadDownloads(false); }); q('refresh-admin').addEventListener('click', loadAdmin);
+  q('refresh-mine').addEventListener('click', () => { loadMine({ initial: !mineRendered }); });
+  q('refresh-media').addEventListener('click', loadMedia); q('refresh-admin').addEventListener('click', loadAdmin);
   setVisibilityListener(true);
   view.addEventListener('viewshow', () => { if (disposed) return; mineVisible = true; setVisibilityListener(true); if (state.tab === 'mine') loadMine({ initial: !mineRendered }); });
   view.addEventListener('viewhide', () => { mineVisible = false; stopMinePolling(); setVisibilityListener(false); detailGeneration++; });
