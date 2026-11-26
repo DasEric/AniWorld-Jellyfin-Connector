@@ -1,5 +1,9 @@
 # Änderungen
 
+## 2.0.1
+
+- **Anfragen-Seite:** Die Anfragen-Seite aus der oberen Navigation wird wieder im H0melab-Design angezeigt. Das Overlay hatte den Seitencontainer verworfen, an dem alle Styles hängen, und zeigte deshalb unformatiertes HTML.
+
 ## 2.0.0
 
 - **Voraussetzungen:** Jellyfin 12.4 (`targetAbi` 12.4.0.0, gebaut gegen Jellyfin 12.4.0) und H0melab Downloader 2.5.0. Zuerst den Downloader aktualisieren, dann den Connector installieren. Downloader 2.4.0 wird nicht unterstützt.
