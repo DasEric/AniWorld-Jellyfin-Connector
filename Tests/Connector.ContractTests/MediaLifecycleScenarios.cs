@@ -223,6 +223,31 @@ internal static class MediaLifecycleScenarios
         Check(proxy.Deleted.Count == 1 && fixture.DeletedIds.Count == 0);
     });
 
+    internal static void BackgroundDeletionReturnsAtOnceAndStaysOwnerBound() => Run(async fixture =>
+    {
+        await fixture.AddReceipt("alice", 'a', '1');
+        var service = new DownloadManagementService(fixture.Ownership, fixture.Client, fixture.Library);
+        var preview = JsonSerializer.SerializeToElement(await service.PreviewAsync("alice", false, new string('a', 32), default));
+        var token = preview.GetProperty("token").GetString()!;
+        await ExpectApplication(HttpStatusCode.NotFound, () => Task.FromResult(service.StartDelete("bob", false, token)));
+        var started = JsonSerializer.SerializeToElement(service.StartDelete("alice", false, token));
+        Check(started.GetProperty("state").GetString() == "running" && started.GetProperty("title").GetString() == "Example");
+        await ExpectApplication(HttpStatusCode.NotFound, () => Task.FromResult(service.StartDelete("alice", false, token)));
+        var running = JsonSerializer.SerializeToElement(service.ListDeletions("alice"));
+        if (running[0].GetProperty("state").GetString() == "running")
+            await ExpectApplication(HttpStatusCode.Conflict, () => service.PreviewAsync("alice", false, new string('a', 32), default));
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        JsonElement jobs;
+        do
+        {
+            await Task.Delay(20);
+            jobs = JsonSerializer.SerializeToElement(service.ListDeletions("alice"));
+        } while (jobs[0].GetProperty("state").GetString() == "running" && DateTime.UtcNow < deadline);
+        Check(jobs.GetArrayLength() == 1 && jobs[0].GetProperty("state").GetString() == "done" && jobs[0].GetProperty("deleted").GetInt32() == 1);
+        Check(fixture.DeletedIds.SequenceEqual([new string('1', 32)]));
+        Check(JsonSerializer.SerializeToElement(service.ListDeletions("bob")).GetArrayLength() == 0);
+    });
+
     internal static void DeletionChecksUserAgainAndIncludesOwnSeriesOnly() => Run(async fixture =>
     {
         await fixture.AddReceipt("alice", 'a', '1');

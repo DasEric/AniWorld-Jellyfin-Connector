@@ -29,8 +29,11 @@ public sealed class DownloadsController : ControllerBase
         => Run(async () => await _downloads.PreviewAsync(Identity(), false, id, token).ConfigureAwait(false));
 
     [HttpPost("Downloads/Delete")]
-    public Task<IActionResult> Delete([FromBody] ConfirmDelete body, CancellationToken token)
-        => Run(async () => await _downloads.ConfirmAsync(Identity(), false, body.Token, token).ConfigureAwait(false));
+    public Task<IActionResult> Delete([FromBody] ConfirmDelete body)
+        => Run(() => Task.FromResult(_downloads.StartDelete(Identity(), false, body.Token)));
+
+    [HttpGet("Downloads/Deletions")]
+    public Task<IActionResult> Deletions() => Run(() => Task.FromResult(_downloads.ListDeletions(Identity())));
 
     [HttpGet("Admin/Downloads"), Authorize(Policy = Policies.RequiresElevation)]
     public Task<IActionResult> All(CancellationToken token) => Run(async () => await _downloads.ListAsync(Identity(), true, token).ConfigureAwait(false));
@@ -40,8 +43,8 @@ public sealed class DownloadsController : ControllerBase
         => Run(async () => await _downloads.PreviewAsync(Identity(), true, id, token).ConfigureAwait(false));
 
     [HttpPost("Admin/Downloads/Delete"), Authorize(Policy = Policies.RequiresElevation)]
-    public Task<IActionResult> AdminDelete([FromBody] ConfirmDelete body, CancellationToken token)
-        => Run(async () => await _downloads.ConfirmAsync(Identity(), true, body.Token, token).ConfigureAwait(false));
+    public Task<IActionResult> AdminDelete([FromBody] ConfirmDelete body)
+        => Run(() => Task.FromResult(_downloads.StartDelete(Identity(), true, body.Token)));
 
     [HttpGet("Admin/Library"), Authorize(Policy = Policies.RequiresElevation)]
     public Task<IActionResult> Library([MaxLength(120)] string query = "") => Run(() => Task.FromResult(_downloads.ListLibrary(query)));

@@ -1,5 +1,9 @@
 # Änderungen
 
+## 2.2.1
+
+- **Löschen im Hintergrund:** Nach dem Bestätigen schließt sich der Dialog sofort, und eine Meldung zeigt an, dass der Titel gelöscht wird. Die Karte bleibt ausgegraut mit „Wird gelöscht…“, bis der Vorgang fertig ist. Danach kommt eine Abschlussmeldung, und die Speicheranzeige aktualisiert sich. Ein Titel, der gerade gelöscht wird, lässt sich nicht erneut löschen, auch nicht aus einem anderen Tab oder Gerät. Löschaufträge laufen nacheinander, und alle Besitz- und Dateiprüfungen finden weiterhin im Auftrag statt. Der Bestätigungsdialog schreibt jetzt korrekt „1 Datei“.
+
 ## 2.2.0
 
 - **Verschobene Downloads löschbar:** Hat der Downloader eine eigene Datei als „verändert/verschoben“ markiert (z. B. nach dem Unraid-Mover), sucht der Connector sie in der Jellyfin-Bibliothek. Maßgeblich sind gleicher Dateiname und exakt gleiche Dateigröße. Wird sie gefunden, kann der anfragende Benutzer sie in „Meine Medien“ löschen. Gelöscht werden nur die Videodatei und ihre zugehörigen Begleitdateien (gleicher Dateiname, z. B. .nfo und .srt), danach entfernt Jellyfin den Eintrag.

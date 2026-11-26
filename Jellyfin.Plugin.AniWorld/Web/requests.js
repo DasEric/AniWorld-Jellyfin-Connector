@@ -3,7 +3,7 @@ export default function (view, params) {
   view.dataset.mfInitialized = '1';
   const api = typeof ApiClient !== 'undefined' ? ApiClient : window.ApiClient;
   const q = (name) => view.querySelector('[data-mf="' + name + '"]');
-  const state = { status: {}, sources: [], detail: null, source: '', tab: 'search' };
+  const state = { status: {}, sources: [], detail: null, source: '', tab: 'search', deletionJobs: new Set() };
   let mineTimer = null;
   let mineLoading = false;
   let mineRendered = false;
@@ -524,10 +524,11 @@ export default function (view, params) {
       const groups = await call(admin ? 'Admin/Downloads' : 'Downloads/Mine');
       if (disposed || !view.isConnected) return;
       host.replaceChildren();
+      if (groups.some((group) => group.deleting) && !state.deletionJobs.size) pollDeletions();
       if (!admin) { renderMedia(host, groups); return; }
       if (!groups.length) emptyLine(host, 'Noch keine nachweislich zugeordneten Downloads vorhanden.');
       groups.forEach((group) => {
-        const card = document.createElement('article'); card.className = 'mf-request';
+        const card = document.createElement('article'); card.className = 'mf-request'; card.dataset.downloadId = group.id;
         const title = document.createElement('div'); title.className = 'mf-requesttitle'; title.textContent = group.title; card.appendChild(title);
         const meta = document.createElement('div'); meta.className = 'mf-meta';
         meta.textContent = group.files.length + ' Dateien · Angefragt: ' + Array.from(new Set(group.files.map((file) => file.language))).join(', ');
@@ -548,7 +549,12 @@ export default function (view, params) {
           row.append(name, details); files.appendChild(row);
         });
         if (files.children.length) card.appendChild(files);
-        if (group.canDelete) {
+        if (group.canDelete && group.deleting) {
+          card.classList.add('deleting');
+          const actions = document.createElement('div'); actions.className = 'mf-actions';
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'mf-btn danger'; button.disabled = true; button.textContent = 'Wird gelöscht…';
+          actions.appendChild(button); card.appendChild(actions);
+        } else if (group.canDelete) {
           const actions = document.createElement('div'); actions.className = 'mf-actions';
           const button = document.createElement('button'); button.type = 'button'; button.className = 'mf-btn danger'; button.textContent = admin ? 'Zugeordnete Downloads löschen' : 'Eigene Downloads / Serie löschen';
           button.onclick = () => deleteDownload((admin ? 'Admin/' : '') + 'Downloads', group.id, admin); actions.appendChild(button); card.appendChild(actions);
@@ -585,7 +591,7 @@ export default function (view, params) {
   function renderMedia(host, groups) {
     if (!groups.length) { emptyLine(host, 'Du hast noch keine eigenen Filme oder Serien heruntergeladen.'); return; }
     groups.forEach((group) => {
-      const card = document.createElement('article'); card.className = 'mf-card mf-mediacard';
+      const card = document.createElement('article'); card.className = 'mf-card mf-mediacard'; card.dataset.downloadId = group.id;
       const total = group.files.reduce((sum, file) => sum + (Number(file.size) || 0), 0);
       const src = mediaCover(group.imageItemId);
       if (src) {
@@ -598,7 +604,10 @@ export default function (view, params) {
       meta.textContent = [group.mediaType === 'series' ? 'Serie' : 'Film',
         group.files.length === 1 ? '1 Datei' : group.files.length + ' Dateien', formatSize(total)].filter(Boolean).join(' · ');
       body.append(title, meta); card.appendChild(body);
-      if (group.canDelete) {
+      if (group.deleting) {
+        card.classList.add('deleting'); card.setAttribute('aria-disabled', 'true');
+        const badge = document.createElement('span'); badge.className = 'mf-mediadelete'; badge.textContent = 'Wird gelöscht…'; card.appendChild(badge);
+      } else if (group.canDelete) {
         const badge = document.createElement('span'); badge.className = 'mf-mediadelete'; badge.textContent = 'Löschen'; card.appendChild(badge);
         card.tabIndex = 0; card.setAttribute('role', 'button'); card.setAttribute('aria-label', group.title + ' löschen');
         const open = () => deleteDownload('Downloads', group.id, false);
@@ -616,11 +625,11 @@ export default function (view, params) {
     try {
       const preview = await call(base + '/' + encodeURIComponent(id) + '/Preview', { method: 'POST' });
       if (disposed || !view.isConnected) return;
-      state.deletion = { base, admin, token: preview.token, running: false };
+      state.deletion = { base, admin, id, title: preview.title, token: preview.token, running: false };
       const total = formatSize((preview.files || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0));
       q('delete-title').textContent = admin ? preview.title : '„' + preview.title + '“ wirklich löschen?';
       q('delete-message').textContent = preview.message;
-      q('delete-count').textContent = preview.count + ' Dateien' + (total ? ' (' + total + ')' : '') + ' werden endgültig aus Jellyfin entfernt:';
+      q('delete-count').textContent = (preview.count === 1 ? '1 Datei' : preview.count + ' Dateien') + (total ? ' (' + total + ')' : '') + ' werden endgültig aus Jellyfin entfernt:';
       q('delete-files').replaceChildren();
       preview.files.forEach((file) => { const row = document.createElement('li'); row.textContent = file.name; q('delete-files').appendChild(row); });
       q('delete-progress').textContent = '';
@@ -637,18 +646,50 @@ export default function (view, params) {
     const selection = state.deletion;
     if (!selection || selection.running) return;
     selection.running = true; q('delete-confirm').disabled = true;
-    q('delete-progress').textContent = 'Dateien werden geprüft und gelöscht…';
+    q('delete-progress').textContent = selection.base === 'Admin/Library' ? 'Dateien werden geprüft und gelöscht…' : 'Löschauftrag wird übergeben…';
     try {
       const result = await call(selection.base + '/Delete', { method: 'POST', body: { token: selection.token } });
       if (disposed || !view.isConnected) return;
-      const conflicts = (result.items || []).filter((item) => item.status !== 'deleted').length;
-      notice(conflicts ? conflicts + ' Dateien wurden wegen Änderungen oder Dateifehlern nicht gelöscht. Bitte neu prüfen.' : 'Dateien gelöscht. Jellyfin aktualisiert den Bibliotheksbestand.', conflicts > 0);
-      await loadDownloads(selection.admin);
-      loadStorage();
-      if (selection.base === 'Admin/Library') await loadLibrary();
+      if (selection.base === 'Admin/Library') {
+        notice('Bibliothekseintrag gelöscht. Jellyfin aktualisiert den Bestand.');
+        await loadLibrary(); loadStorage();
+        return;
+      }
+      // Background deletion: close at once, grey out the card and keep browsing.
+      state.deletionJobs.add(result.jobId);
+      markDeleting(selection.id);
+      notice('„' + (result.title || selection.title || 'Titel') + '“ wird im Hintergrund gelöscht. Du kannst währenddessen weitermachen.');
+      pollDeletions();
     } catch (error) { if (!disposed && view.isConnected) notice(error.message, true); }
     finally { selection.running = false; if (!disposed && view.isConnected) closeDeletePreview(); }
   });
+  function markDeleting(id) {
+    view.querySelectorAll('[data-download-id]').forEach((card) => {
+      if (card.dataset.downloadId !== id) return;
+      card.classList.add('deleting'); card.setAttribute('aria-disabled', 'true');
+      const badge = card.querySelector('.mf-mediadelete'); if (badge) badge.textContent = 'Wird gelöscht…';
+      card.querySelectorAll('button.danger').forEach((button) => { button.disabled = true; button.textContent = 'Wird gelöscht…'; });
+    });
+  }
+  let deletionTimer = 0;
+  async function pollDeletions() {
+    clearTimeout(deletionTimer);
+    if (disposed || !view.isConnected) return;
+    let jobs = [];
+    try { jobs = await call('Downloads/Deletions'); } catch (_) { /* retried below */ }
+    if (disposed || !view.isConnected) return;
+    let finished = false;
+    (Array.isArray(jobs) ? jobs : []).forEach((job) => {
+      if (job.state === 'running') { state.deletionJobs.add(job.id); return; }
+      if (!state.deletionJobs.delete(job.id)) return;
+      finished = true;
+      if (job.state === 'failed') notice('„' + job.title + '“ konnte nicht gelöscht werden: ' + (job.message || 'unbekannter Fehler'), true);
+      else if (job.conflicts) notice('„' + job.title + '“: ' + job.deleted + ' gelöscht, ' + job.conflicts + ' Dateien wegen Änderungen oder Dateifehlern übersprungen.', true);
+      else notice('„' + job.title + '“ wurde gelöscht. Der Speicher ist wieder frei.');
+    });
+    if (finished) { loadDownloads(false); if (state.tab === 'admin') loadDownloads(true); loadStorage(); }
+    if (state.deletionJobs.size) deletionTimer = setTimeout(pollDeletions, 3000);
+  }
   async function loadLibrary() {
     const host = q('admin-library');
     try {
@@ -758,6 +799,7 @@ export default function (view, params) {
   return function dispose() {
     if (disposed) return;
     disposed = true;
+    clearTimeout(deletionTimer);
     mineVisible = false;
     stopMinePolling();
     setVisibilityListener(false);

@@ -45,6 +45,7 @@ public sealed class DownloadManagementService
                     size = file.Size, mediaType = file.MediaType, streams = file.Streams, verification = file.Verification,
                     subtitleLanguage = subtitles[file.RequestKey], subtitleVerification = file.VerifySubtitle(subtitles[file.RequestKey]) }).ToArray(),
                 libraryFiles = libraryDeletable.Count,
+                deleting = IsDeleting(keys),
                 canDelete = artifacts.Any(file => file.State is "owned" or "missing") || libraryDeletable.Count > 0 };
         }).Where(group => group.files.Length > 0).ToArray();
     }
@@ -55,6 +56,7 @@ public sealed class DownloadManagementService
         var selected = intents.SingleOrDefault(entry => entry.RequestKey == requestKey) ?? throw Missing();
         var keys = intents.Where(entry => entry.OwnerId == selected.OwnerId && entry.Source == selected.Source && entry.SeriesUrl == selected.SeriesUrl)
             .Select(entry => entry.RequestKey).ToHashSet(StringComparer.Ordinal);
+        if (IsDeleting(keys)) throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Dieser Titel wird bereits gelöscht.");
         var chosen = files.Where(file => keys.Contains(file.RequestKey) && file.State is "owned" or "missing").ToArray();
         // Files the downloader can no longer prove (moved, new inode) are still this user's
         // download when Jellyfin holds a file with the same name and exact byte size.
@@ -63,7 +65,7 @@ public sealed class DownloadManagementService
             .Select(file => { try { return CheckedFile(file.Path, roots); } catch (AniWorldApplicationException) { return null; } })
             .OfType<FileSnapshot>().ToArray();
         if (chosen.Length + local.Length is < 1 or > 20_000) throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Bitte zwischen 1 und 20000 eigene Dateien pro Löschvorgang auswählen.");
-        var id = Cache(new DeletePreview(user, admin, DateTime.UtcNow.AddMinutes(2), chosen.Select(file => file.Id).ToArray(), keys.ToArray(), null, local));
+        var id = Cache(new DeletePreview(user, admin, DateTime.UtcNow.AddMinutes(2), chosen.Select(file => file.Id).ToArray(), keys.ToArray(), null, local, selected.Title));
         var message = admin ? "Admin: Nur die aufgelisteten zugeordneten Dateien werden entfernt. Andere Dateien bleiben erhalten."
             : "Nur die aufgelisteten eigenen Dateien werden entfernt. Andere Dateien bleiben erhalten.";
         if (local.Length > 0) message += " " + local.Length + " davon wurden nach dem Download verschoben und werden direkt in der Jellyfin-Bibliothek gelöscht.";
@@ -73,10 +75,92 @@ public sealed class DownloadManagementService
             count = chosen.Length + local.Length, message };
     }
 
-    public async Task<JsonElement> ConfirmAsync(string user, bool admin, string previewToken, CancellationToken token)
+    public Task<JsonElement> ConfirmAsync(string user, bool admin, string previewToken, CancellationToken token)
     {
         var preview = Consume(user, admin, previewToken);
         if (preview.LibraryItem.HasValue) throw Missing();
+        return ExecuteDeleteAsync(user, admin, preview, token);
+    }
+
+    // Confirmation returns at once; the deletion runs in the background. Every ownership
+    // and file check still happens inside the job, exactly as in a direct confirmation.
+    public object StartDelete(string user, bool admin, string previewToken)
+    {
+        PruneJobs();
+        var preview = Consume(user, admin, previewToken);
+        if (preview.LibraryItem.HasValue) throw Missing();
+        var job = new DeletionJob(Guid.NewGuid().ToString("N"), user, preview.Title, preview.Keys);
+        lock (_jobs)
+        {
+            if (_jobs.Values.Any(other => !other.Finished && other.Keys.Intersect(job.Keys, StringComparer.Ordinal).Any()))
+                throw new AniWorldApplicationException(HttpStatusCode.Conflict, "Dieser Titel wird bereits gelöscht.");
+            _jobs[job.Id] = job;
+        }
+        _ = Task.Run(async () =>
+        {
+            await _jobGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var result = await ExecuteDeleteAsync(user, admin, preview, CancellationToken.None).ConfigureAwait(false);
+                var statuses = result.ValueKind == JsonValueKind.Object && result.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array
+                    ? items.EnumerateArray().Select(item => item.TryGetProperty("status", out var status) ? status.GetString() : null).ToArray() : [];
+                job.Complete(statuses.Count(status => status == "deleted"), statuses.Count(status => status != "deleted"), null);
+            }
+            catch (Exception exception)
+            {
+                job.Complete(0, 0, exception is AniWorldApplicationException or AniWorldException ? exception.Message : "Das Löschen ist fehlgeschlagen. Bitte erneut versuchen.");
+            }
+            finally { _jobGate.Release(); }
+        });
+        return new { jobId = job.Id, title = job.Title, state = "running" };
+    }
+
+    public object ListDeletions(string user)
+    {
+        PruneJobs();
+        lock (_jobs)
+        {
+            return _jobs.Values.Where(job => job.User == user).OrderBy(job => job.Started).Select(job => new { id = job.Id, title = job.Title,
+                state = !job.Finished ? "running" : job.Error is not null ? "failed" : "done", deleted = job.Deleted, conflicts = job.Conflicts,
+                message = job.Error }).ToArray();
+        }
+    }
+
+    private bool IsDeleting(IEnumerable<string> keys)
+    {
+        lock (_jobs) return _jobs.Values.Any(job => !job.Finished && keys.Any(key => job.Keys.Contains(key, StringComparer.Ordinal)));
+    }
+
+    private void PruneJobs()
+    {
+        lock (_jobs)
+            foreach (var old in _jobs.Values.Where(job => job.Finished && job.FinishedAt < DateTime.UtcNow.AddMinutes(-15)).Select(job => job.Id).ToArray())
+                _jobs.Remove(old);
+    }
+
+    private readonly Dictionary<string, DeletionJob> _jobs = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _jobGate = new(1, 1);
+
+    private sealed class DeletionJob(string id, string user, string title, string[] keys)
+    {
+        public string Id { get; } = id;
+        public string User { get; } = user;
+        public string Title { get; } = title;
+        public string[] Keys { get; } = keys;
+        public DateTime Started { get; } = DateTime.UtcNow;
+        public volatile bool Finished;
+        public DateTime FinishedAt;
+        public int Deleted;
+        public int Conflicts;
+        public string? Error;
+        public void Complete(int deleted, int conflicts, string? error)
+        {
+            Deleted = deleted; Conflicts = conflicts; Error = error; FinishedAt = DateTime.UtcNow; Finished = true;
+        }
+    }
+
+    private async Task<JsonElement> ExecuteDeleteAsync(string user, bool admin, DeletePreview preview, CancellationToken token)
+    {
         var (intents, files) = await ReadAsync(user, admin, token).ConfigureAwait(false);
         var allowed = intents.Select(entry => entry.RequestKey).ToHashSet(StringComparer.Ordinal);
         if (preview.Keys.Any(key => !allowed.Contains(key)) || preview.Ids.Any(id => !files.Any(file => file.Id == id && preview.Keys.Contains(file.RequestKey, StringComparer.Ordinal)
@@ -341,7 +425,7 @@ public sealed class DownloadManagementService
         return value;
     }
     private static AniWorldApplicationException Missing() => new(HttpStatusCode.NotFound, "Keine passende eigene Datei oder gültige Löschvorschau gefunden.");
-    private sealed record DeletePreview(string User, bool Admin, DateTime Expires, string[] Ids, string[] Keys, Guid? LibraryItem, IReadOnlyList<FileSnapshot> Snapshots);
+    private sealed record DeletePreview(string User, bool Admin, DateTime Expires, string[] Ids, string[] Keys, Guid? LibraryItem, IReadOnlyList<FileSnapshot> Snapshots, string Title = "");
     private sealed record FileSnapshot(string Path, long Size, long Modified);
     internal sealed record StorageInfo(bool Available, long Total, long Used, long Free, string Level);
     private sealed record LibraryFile(string ArtifactId, string Path, Guid ItemId);

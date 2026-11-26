@@ -50,6 +50,7 @@ var tests = new (string Name, Action Run)[]
     ("missing mount never falls back", MediaLifecycleScenarios.MissingMountNeverFallsBack),
     ("ownership survives history and restart", MediaLifecycleScenarios.OwnershipPersistsWithoutRequestHistory),
     ("deletion rechecks owner and includes only own series files", MediaLifecycleScenarios.DeletionChecksUserAgainAndIncludesOwnSeriesOnly),
+    ("background deletion returns at once and stays owner-bound", MediaLifecycleScenarios.BackgroundDeletionReturnsAtOnceAndStaysOwnerBound),
     ("moved own files are deleted through Jellyfin, foreign and pre-existing files stay", MediaLifecycleScenarios.MovedOwnFilesAreDeletedThroughJellyfinOnly),
     ("mount validation checks a real shared file", MediaLifecycleScenarios.SharedMountProbeChecksActualFile),
     ("saved destinations are used immediately", MediaLifecycleScenarios.SavedDestinationsAreUsedImmediately),
