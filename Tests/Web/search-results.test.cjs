@@ -49,3 +49,17 @@ test('one failing source does not suppress successful hits', async () => {
   assert.equal(result.count, 2);
   assert.equal(f.cards[0].textContent, 'Other konnte nicht durchsucht werden, die übrigen Quellen werden angezeigt. (HTTP 500)');
 });
+
+test('a real match in a later source removes earlier filler and moves ahead', async () => {
+  const f = fixture();
+  const list = [];
+  const make = (item, source) => { const card = { item, source, remove() { list.splice(list.indexOf(card), 1); } }; return card; };
+  f.context.createMediaCard = (item, source) => make(item, source);
+  const host = { insertBefore: (card, ref) => { const at = ref && list.includes(ref) ? list.indexOf(ref) : list.length; list.splice(at, 0, card); } };
+  const hits = (source, titles) => ({ source, label: source, data: { results: titles.map(([title, relevance]) => ({ title, relevance })) } });
+  await f.context.appendResults(host, [hits('mangafire', [['2x2xX', 0.333], ['We Never Broke Up', 0.333]])], {}, 1);
+  await f.context.appendResults(host, [hits('localized', [['Ohne Bewertung', undefined]])], {}, 1);
+  await f.context.appendResults(host, [hits('moflix', [['2 Broke Girls', 1], ['Alles steht Kopf 2', 0.333]])], {}, 1);
+  await f.context.appendResults(host, [hits('sto', [['2 Broke Girls', 1], ['Broke', 0.333]])], {}, 1);
+  assert.deepEqual(list.map((card) => card.source + ':' + card.item.title), ['moflix:2 Broke Girls', 'sto:2 Broke Girls', 'localized:Ohne Bewertung']);
+});

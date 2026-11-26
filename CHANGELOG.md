@@ -1,5 +1,9 @@
 # Änderungen
 
+## 2.2.3
+
+- **Suche quellenübergreifend:** Sobald irgendeine Quelle einen wirklich passenden Titel liefert, verschwindet der Beifang aller Quellen. Das gilt auch für Treffer, die schon angezeigt wurden, zum Beispiel MangaFire-Treffer, in denen bei „2 broke girls“ nur eine „2“ oder „Broke“ vorkommt. Passende Treffer rücken vor die übrigen. Findet keine Quelle etwas Passendes, bleiben alle Treffer sichtbar, etwa über lokalisierte Titel.
+
 ## 2.2.2
 
 - **Suche ohne Beifang:** Liefert eine Quelle mindestens einen wirklich passenden Titel, werden unpassende Treffer dieser Quelle ausgeblendet. Ein Beispiel ist bei „2 broke girls“ jeder Film mit einer „2“ im Titel. Die besten Treffer stehen vorn.

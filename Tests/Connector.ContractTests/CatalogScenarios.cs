@@ -147,6 +147,9 @@ internal static class CatalogScenarios
         Check(Titles("kung fu panda").SequenceEqual(["Kung Fu Panda 2"]));
         Check(Titles("kung fu pnada").SequenceEqual(["Kung Fu Panda 2"]));
         Check(SearchRelevance.Relevance(data.RootElement.GetProperty("results")[0], "2 broke girls") < 0.6);
+        // Each hit carries its score so the page can drop filler across sources.
+        Check(SearchRelevance.Filter(data.RootElement, "2 broke girls", "video").GetProperty("results")[0].GetProperty("relevance").GetDouble() == 1);
+        Check(SearchRelevance.Filter(data.RootElement, "spirited away", "video").GetProperty("results")[0].GetProperty("relevance").GetDouble() == 0);
     }
 
     internal static void SearchPreservesLargeListsAndEditions()

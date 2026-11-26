@@ -5,8 +5,8 @@
   "overview": "Search enabled sources, request the right language, route films and series to separate libraries, and manage your own downloads.",
   "owner": "Eric",
   "category": "General",
-  "version": "2.2.2.0",
+  "version": "2.2.3.0",
   "targetAbi": "12.4.0.0",
   "framework": "net10.0",
-  "changelog": "Search drops unrelated filler when a source returns a real match, ranks the best matches first and tolerates small typos; a failing source is shown as a slim notice above the results. Requires Jellyfin 12.4 and H0melab Downloader 2.5.0."
+  "changelog": "Search filler is now dropped across all sources as soon as any source returns a real title match, including hits already shown; real matches move to the front. Requires Jellyfin 12.4 and H0melab Downloader 2.5.0."
 }

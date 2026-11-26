@@ -238,12 +238,25 @@ export default function (view, params) {
 
   async function appendResults(host, groups, before, generation) {
     let count = 0; let errors = 0;
+    const rank = rankFor(generation);
     for (const group of groups) {
       const results = group.data && Array.isArray(group.data.results) ? group.data.results : [];
+      if (!rank.strong && results.some((item) => relevanceOf(item) !== null && relevanceOf(item) >= STRONG_MATCH)) {
+        rank.strong = true;
+        rank.filler.forEach((card) => { if (typeof card.remove === 'function') card.remove(); });
+        rank.weak = rank.weak.filter((card) => !rank.filler.includes(card)); rank.filler = [];
+      }
       for (const item of results) {
         if (disposed || generation !== searchGeneration || !view.isConnected) return { count, errors };
+        const relevance = relevanceOf(item);
+        if (rank.strong && relevance !== null && relevance < KEEP_MATCH) continue;
         const card = createMediaCard(item, group.source, group.label);
-        host.insertBefore(card, before); count++;
+        if (relevance !== null && relevance >= STRONG_MATCH) host.insertBefore(card, rank.weak[0] || before);
+        else {
+          host.insertBefore(card, before); rank.weak.push(card);
+          if (relevance !== null && relevance < KEEP_MATCH) rank.filler.push(card);
+        }
+        count++;
         // Keep the downloader's order and yield so large result sets remain interactive.
         if (count % 24 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -259,6 +272,16 @@ export default function (view, params) {
     return { count, errors };
   }
 
+  // Sources answer one by one. As soon as any source has a real title match, filler
+  // from every source (already shown or still to come) is dropped and real matches
+  // move ahead of the remaining hits.
+  const STRONG_MATCH = 0.75; const KEEP_MATCH = 0.6;
+  const searchRank = { generation: -1, strong: false, filler: [], weak: [] };
+  function rankFor(generation) {
+    if (searchRank.generation !== generation) Object.assign(searchRank, { generation, strong: false, filler: [], weak: [] });
+    return searchRank;
+  }
+  function relevanceOf(item) { return item && typeof item.relevance === 'number' ? item.relevance : null; }
   function createMediaCard(item, sourceId, sourceLabel) {
     const card = document.createElement('article'); card.className = 'mf-card'; card.tabIndex = 0;
     const rawUrl = item.url || item.link || item.series_url;

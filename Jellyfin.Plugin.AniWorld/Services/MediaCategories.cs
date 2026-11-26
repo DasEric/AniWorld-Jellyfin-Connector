@@ -238,9 +238,16 @@ internal static class SearchRelevance
         // untouched: they usually match a localized title the response does not carry.
         var scored = filtered.Select((item, index) => (Item: item, Index: index, Score: Relevance(item, query))).ToArray();
         if (scored.Any(entry => entry.Score >= StrongMatch))
-            filtered = scored.Where(entry => entry.Score >= KeepMatch)
-                .OrderByDescending(entry => entry.Score).ThenBy(entry => entry.Index)
-                .Select(entry => entry.Item).ToArray();
-        return JsonSerializer.SerializeToElement(new { results = filtered });
+            scored = scored.Where(entry => entry.Score >= KeepMatch)
+                .OrderByDescending(entry => entry.Score).ThenBy(entry => entry.Index).ToArray();
+        // The score travels with each hit so the page can also drop filler from a source
+        // without any match once another source found the real title.
+        var results = scored.Select(entry =>
+        {
+            var fields = entry.Item.EnumerateObject().ToDictionary(property => property.Name, property => (object)property.Value);
+            fields["relevance"] = Math.Round(entry.Score, 3);
+            return fields;
+        }).ToArray();
+        return JsonSerializer.SerializeToElement(new { results });
     }
 }
