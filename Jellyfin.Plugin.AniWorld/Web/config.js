@@ -40,6 +40,7 @@ export default function (view) {
       byId('mfAllowEbooks').checked = config.AllowEbookRequests === true;
       byId('mfAllowAudiobooks').checked = config.AllowAudiobookRequests === true;
       byId('mfAllowPodcasts').checked = config.AllowPodcastRequests === true;
+      byId('mfAllowMusic').checked = config.AllowMusicRequests !== false;
       byId('mfAllUsers').checked = config.EnableAllUsers !== false;
       byId('mfMaintenance').checked = config.MaintenanceMode === true;
       byId('mfMaintenanceMessage').value = config.MaintenanceMessage || '';
@@ -67,6 +68,7 @@ export default function (view) {
       config.AllowEbookRequests = byId('mfAllowEbooks').checked;
       config.AllowAudiobookRequests = byId('mfAllowAudiobooks').checked;
       config.AllowPodcastRequests = byId('mfAllowPodcasts').checked;
+      config.AllowMusicRequests = byId('mfAllowMusic').checked;
       config.EnableAllUsers = byId('mfAllUsers').checked;
       config.MaintenanceMode = byId('mfMaintenance').checked;
       config.MaintenanceMessage = byId('mfMaintenanceMessage').value.trim();

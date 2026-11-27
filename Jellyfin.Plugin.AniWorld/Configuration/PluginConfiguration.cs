@@ -40,6 +40,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets whether Jellyfin users may search and request podcasts.</summary>
     public bool AllowPodcastRequests { get; set; }
 
+    /// <summary>Gets or sets whether Jellyfin users may search and request music (Soulseek in the downloader).</summary>
+    public bool AllowMusicRequests { get; set; } = true;
+
     /// <summary>Gets or sets whether the sidebar entry is injected for every user.</summary>
     public bool EnableAllUsers { get; set; } = true;
 

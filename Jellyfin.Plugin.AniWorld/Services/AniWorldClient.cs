@@ -168,6 +168,38 @@ public sealed partial class AniWorldClient
     public Task<AniWorldImage> GetCatalogCoverAsync(string token, CancellationToken cancellationToken)
         => GetImageFromPathAsync("api/catalog/cover?token=" + Uri.EscapeDataString(token), cancellationToken);
 
+    /// <summary>Soulseek state of the downloader's Music tab ({"configured": bool, ...}).</summary>
+    public Task<JsonElement> GetMusicStatusAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/music/status", null, cancellationToken, TimeSpan.FromSeconds(10));
+
+    public Task<JsonElement> StartMusicSearchAsync(string query, CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Post, "api/music/search", new { q = query }, cancellationToken, SearchTimeout);
+
+    public Task<JsonElement> GetMusicSearchAsync(string searchId, CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/music/search/" + Uri.EscapeDataString(searchId), null, cancellationToken, SearchTimeout);
+
+    public Task DeleteMusicSearchAsync(string searchId, CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Delete, "api/music/search/" + Uri.EscapeDataString(searchId), null, cancellationToken, TimeSpan.FromSeconds(10));
+
+    /// <summary>Hands an album to the downloader's Soulseek client. Returns the number of accepted files.</summary>
+    public async Task<int> QueueMusicAsync(string username, IReadOnlyList<MusicTrack> files, CancellationToken cancellationToken)
+    {
+        var response = await SendAsync(HttpMethod.Post, "api/music/download", new
+        {
+            username,
+            files = files.Select(file => new { filename = file.Filename, size = file.Size }).ToArray(),
+        }, cancellationToken).ConfigureAwait(false);
+        if (response.TryGetProperty("queued", out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var count) && count > 0)
+            return count;
+        throw new AniWorldException(HttpStatusCode.BadGateway, "Der Downloader hat den Musik-Download nicht bestätigt.");
+    }
+
+    public Task<JsonElement> GetMusicTransfersAsync(CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Get, "api/music/transfers", null, cancellationToken, TimeSpan.FromSeconds(20));
+
+    public Task<AniWorldImage> GetMusicCoverAsync(string key, CancellationToken cancellationToken)
+        => GetImageFromPathAsync("api/music/cover/" + Uri.EscapeDataString(key), cancellationToken);
+
     /// <summary>Lädt Seriendetails (Titel, Poster, Beschreibung, Jahr).</summary>
     public Task<JsonElement> GetSeriesAsync(string url, CancellationToken cancellationToken)
         => GetWithUrlAsync("api/series", url, cancellationToken);

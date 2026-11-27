@@ -13,22 +13,27 @@ public static class MediaCategories
     {
         ["movie"] = "Filme", ["series"] = "Serien / Anime", ["manga"] = "Manga",
         ["ebook"] = "E-Books", ["audiobook"] = "Hörbücher", ["podcast"] = "Podcasts",
+        ["music"] = "Musik",
     };
 
     public static bool IsCatalog(string? value) => value is "ebook" or "audiobook" or "podcast";
+
+    /// <summary>Music is served by the downloader's Soulseek client, not by a video or catalog source.</summary>
+    public static bool IsMusic(string? value) => value == "music";
 
     public static string? Normalize(string? value) => value?.Trim().ToLowerInvariant() switch
     {
         "movie" or "movies" or "film" or "filme" => "movie",
         "series" or "tv" or "serie" or "serien" => "series",
-        "manga" => "manga", "ebook" => "ebook", "audiobook" => "audiobook", "podcast" => "podcast", _ => null,
+        "manga" => "manga", "ebook" => "ebook", "audiobook" => "audiobook", "podcast" => "podcast",
+        "music" or "musik" => "music", _ => null,
     };
 
     public static bool IsAllowed(string category, PluginConfiguration config) => category switch
     {
         "movie" or "series" or "manga" => true,
         "ebook" => config.AllowEbookRequests, "audiobook" => config.AllowAudiobookRequests,
-        "podcast" => config.AllowPodcastRequests, _ => false,
+        "podcast" => config.AllowPodcastRequests, "music" => config.AllowMusicRequests, _ => false,
     };
 
     // Search groups are UI/API filters, never persisted request media types.
@@ -51,6 +56,7 @@ public static class MediaCategories
         {
             (Id: "video", Label: "Serien & Filme"),
             (Id: "catalog", Label: "Bücher & Audio"),
+            (Id: "music", Label: "Musik"),
         }
         .Select(group => new { id = group.Id, label = group.Label, media_types = SearchTypes(group.Id, config) })
         .Where(group => group.media_types.Count > 0).Cast<object>().ToArray();

@@ -104,15 +104,18 @@ public sealed partial class AniWorldRequestApplicationService
                 "AniWorld hat keine gültigen Quelleinstellungen geliefert. Es werden vorsorglich keine Quellen angezeigt.");
         }
 
+        IReadOnlyList<AniWorldSiteInfo> sources;
         try
         {
             var capabilities = await _aniWorld.GetSourcesAsync(cancellationToken).ConfigureAwait(false);
-            return ReadSourceCapabilities(settings, capabilities, CurrentConfiguration);
+            sources = ReadSourceCapabilities(settings, capabilities, CurrentConfiguration);
         }
         catch (AniWorldException exception) when (exception.UpstreamStatusCode == HttpStatusCode.NotFound)
         {
-            return ReadEnabledSources(settings, configuredSources);
+            sources = ReadEnabledSources(settings, configuredSources);
         }
+
+        return await WithMusicSourceAsync(sources, cancellationToken).ConfigureAwait(false);
     }
 
     internal static IReadOnlyList<AniWorldSiteInfo> ReadSourceCapabilities(JsonElement settings, JsonElement response, PluginConfiguration configuration)
@@ -137,7 +140,8 @@ public sealed partial class AniWorldRequestApplicationService
                 || !item.TryGetProperty("media_types", out var kinds) || kinds.ValueKind != JsonValueKind.Array) continue;
             var types = kinds.EnumerateArray().Where(kind => kind.ValueKind == JsonValueKind.String)
                 .Select(kind => MediaCategories.Normalize(kind.GetString())).OfType<string>()
-                .Where(kind => MediaCategories.IsAllowed(kind, configuration) && (backend == "catalog") == MediaCategories.IsCatalog(kind))
+                .Where(kind => MediaCategories.IsAllowed(kind, configuration) && !MediaCategories.IsMusic(kind)
+                    && (backend == "catalog") == MediaCategories.IsCatalog(kind))
                 .Distinct(StringComparer.Ordinal).ToArray();
             if (types.Length == 0) continue;
             var paths = item.TryGetProperty("browse_paths", out var browse) && browse.ValueKind == JsonValueKind.Array
@@ -235,6 +239,13 @@ public sealed partial class AniWorldRequestApplicationService
             await concurrency.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                if (item.Backend == "music")
+                {
+                    // Soulseek hits are album folders; the releases are granted inside the search.
+                    var music = await SearchMusicAsync(userId, query, cancellationToken).ConfigureAwait(false);
+                    return new AniWorldSearchGroup(item.Id, item.Label, music, null);
+                }
+
                 var data = item.Backend == "catalog"
                     ? await _aniWorld.SearchCatalogAsync(query, item.Id, cancellationToken).ConfigureAwait(false)
                     : await _aniWorld.SearchAsync(query, item.Id, cancellationToken).ConfigureAwait(false);
@@ -297,8 +308,8 @@ public sealed partial class AniWorldRequestApplicationService
         CancellationToken cancellationToken)
     {
         Normalize(request);
-        if (MediaCategories.IsCatalog(request.MediaType))
-            throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Katalogmedien benötigen eine konkrete Dateiauswahl.");
+        if (MediaCategories.IsCatalog(request.MediaType) || MediaCategories.IsMusic(request.MediaType))
+            throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Katalogmedien und Musik benötigen eine konkrete Auswahl aus der Suche.");
         var validationError = ValidateAutomaticRequest(request, requireOptions: false);
         if (validationError is not null)
         {
@@ -507,8 +518,8 @@ public sealed partial class AniWorldRequestApplicationService
         CancellationToken cancellationToken)
     {
         Normalize(request);
-        if (MediaCategories.IsCatalog(request.MediaType))
-            throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Für diese Kategorie muss eine Katalogdatei ausgewählt werden.");
+        if (MediaCategories.IsCatalog(request.MediaType) || MediaCategories.IsMusic(request.MediaType))
+            throw new AniWorldApplicationException(HttpStatusCode.BadRequest, "Für diese Kategorie muss eine Auswahl aus der Suche angefragt werden.");
         var validationError = ValidateAutomaticRequest(request, requireOptions: true);
         if (validationError is not null)
         {
@@ -595,6 +606,8 @@ public sealed partial class AniWorldRequestApplicationService
         {
             if (request.Backend == "catalog")
                 return await QueueCatalogRequestAsync(request, decidedBy, cancellationToken).ConfigureAwait(false);
+            if (request.Backend == "music")
+                return await QueueMusicRequestAsync(request, decidedBy, cancellationToken).ConfigureAwait(false);
             if (!await SourceIsAllowedAsync(
                     request.UserId,
                     request.Source,

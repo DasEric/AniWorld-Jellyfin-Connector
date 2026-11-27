@@ -219,6 +219,29 @@ public sealed class AniWorldRequestsController : ControllerBase
         catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
     }
 
+    [HttpPost("Requests/Music")]
+    [Consumes(MediaTypeNames.Application.Json)]
+    public async Task<IActionResult> CreateMusicRequest([FromBody] MusicMediaRequest request, CancellationToken cancellationToken)
+    {
+        var (userId, username) = CurrentUser();
+        try { return MapSubmitResult(await _application.SubmitMusicAsync(userId, username, request, cancellationToken).ConfigureAwait(false), "music"); }
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
+    }
+
+    [HttpGet("Music/Cover")]
+    public async Task<IActionResult> MusicCover([Required, MaxLength(40)] string key, CancellationToken cancellationToken)
+    {
+        var (userId, _) = CurrentUser();
+        if (!Allow(userId, "image", 240)) return RateLimitExceeded();
+        try
+        {
+            var image = await _application.GetMusicCoverAsync(userId, key, cancellationToken).ConfigureAwait(false);
+            Response.Headers.CacheControl = "private, max-age=86400";
+            return File(image.Data, image.MediaType);
+        }
+        catch (Exception exception) when (exception is AniWorldException or AniWorldApplicationException) { return ApplicationError(exception); }
+    }
+
     [HttpPost("Requests/Plan")]
     [Consumes(MediaTypeNames.Application.Json)]
     public async Task<IActionResult> PlanRequest(
@@ -687,7 +710,7 @@ public sealed class AniWorldRequestsController : ControllerBase
             SubmitDisposition.QueueFailed => StatusCode(StatusCodes.Status502BadGateway, result.Request),
             SubmitDisposition.Duplicate => Conflict(new
             {
-                error = "Diese fehlenden Inhalte wurden bereits angefragt.",
+                error = MediaCategories.IsMusic(mediaType) ? "Dieses Album wurde bereits angefragt." : "Diese fehlenden Inhalte wurden bereits angefragt.",
                 request = result.Duplicate,
             }),
             SubmitDisposition.LimitReached => StatusCode(StatusCodes.Status429TooManyRequests, new

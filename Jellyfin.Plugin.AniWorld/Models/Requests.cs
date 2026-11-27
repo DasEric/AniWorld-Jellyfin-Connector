@@ -14,6 +14,9 @@ public sealed class CreateMediaRequest
     public string CatalogItemId { get; set; } = string.Empty;
     public string CatalogAssetId { get; set; } = string.Empty;
     public string Format { get; set; } = string.Empty;
+    public string MusicUser { get; set; } = string.Empty;
+    public string MusicDirectory { get; set; } = string.Empty;
+    public string MusicFilesJson { get; set; } = "[]";
     [Required]
     [MaxLength(300)]
     public string Title { get; set; } = string.Empty;
@@ -103,4 +106,11 @@ public sealed class CatalogMediaRequest
 
     [Required, MaxLength(20)]
     public string MediaType { get; set; } = string.Empty;
+}
+
+/// <summary>A music selection references a server-side search result, never client-chosen files.</summary>
+public sealed class MusicMediaRequest
+{
+    [Required, MaxLength(64)]
+    public string Token { get; set; } = string.Empty;
 }

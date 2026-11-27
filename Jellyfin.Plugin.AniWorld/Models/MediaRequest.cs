@@ -53,6 +53,18 @@ public sealed class MediaRequest
     [JsonPropertyName("format")]
     public string Format { get; set; } = string.Empty;
 
+    /// <summary>Soulseek user that shares the requested album (music backend only).</summary>
+    [JsonPropertyName("musicUser")]
+    public string MusicUser { get; set; } = string.Empty;
+
+    /// <summary>Remote folder of the requested album (music backend only).</summary>
+    [JsonPropertyName("musicDirectory")]
+    public string MusicDirectory { get; set; } = string.Empty;
+
+    /// <summary>Serialized list of the album's files as returned by the downloader search.</summary>
+    [JsonPropertyName("musicFilesJson")]
+    public string MusicFilesJson { get; set; } = "[]";
+
     [JsonPropertyName("submissionKey")]
     public string SubmissionKey { get; set; } = string.Empty;
 

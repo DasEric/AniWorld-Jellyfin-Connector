@@ -323,10 +323,15 @@ internal static class CatalogScenarios
 
     internal static void TwoSearchGroupsRespectPermissions()
     {
-        using var config = JsonDocument.Parse(JsonSerializer.Serialize(MediaCategories.Available(new PluginConfiguration())));
+        // Music is allowed by default; the page hides it while the downloader offers no Soulseek source.
+        using var defaults = JsonDocument.Parse(JsonSerializer.Serialize(MediaCategories.Available(new PluginConfiguration())));
+        Check(defaults.RootElement.GetArrayLength() == 2);
+        Check(defaults.RootElement[0].GetProperty("id").GetString() == "video");
+        Check(defaults.RootElement[1].GetProperty("id").GetString() == "music");
+        using var config = JsonDocument.Parse(JsonSerializer.Serialize(MediaCategories.Available(new PluginConfiguration { AllowMusicRequests = false })));
         Check(config.RootElement.GetArrayLength() == 1);
         Check(config.RootElement[0].GetProperty("id").GetString() == "video");
-        using var enabled = JsonDocument.Parse(JsonSerializer.Serialize(MediaCategories.Available(new PluginConfiguration { AllowEbookRequests = true })));
+        using var enabled = JsonDocument.Parse(JsonSerializer.Serialize(MediaCategories.Available(new PluginConfiguration { AllowEbookRequests = true, AllowMusicRequests = false })));
         Check(enabled.RootElement.GetArrayLength() == 2);
         Check(enabled.RootElement[1].GetProperty("id").GetString() == "catalog");
     }
@@ -440,6 +445,14 @@ internal static class CatalogScenarios
         internal List<string> BrowseQueries { get; } = [];
         internal JsonElement LastPayload;
         internal bool PartialVideoLanguages;
+        internal const string MusicSearchId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        internal bool MusicEnabled;
+        internal int MusicStatusCalls;
+        internal int MusicDownloadCalls;
+        internal bool MusicSearchDeleted;
+        internal string? MusicQuery;
+        internal string MusicSearchState = """{"id":"x","complete":true,"releases":[]}""";
+        internal string MusicTransfers = """{"transfers":[]}""";
         private readonly HttpClient _http;
 
         internal Fixture()
@@ -537,6 +550,29 @@ internal static class CatalogScenarios
                     ? new { results = new object[] { new { title = "Example", url = "https://example.test" + path } } }
                     : (object)new { results = new[] { new { title = "Example", url = "https://example.test" + path, media_type = "series" } } };
             }
+            else if (path.EndsWith("/api/music/status", StringComparison.Ordinal))
+            {
+                MusicStatusCalls++;
+                data = new { configured = MusicEnabled, phase = "running" };
+            }
+            else if (path.EndsWith("/api/music/search", StringComparison.Ordinal))
+            {
+                Check(request.Method == HttpMethod.Post);
+                MusicQuery = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement.GetProperty("q").GetString();
+                data = new { id = MusicSearchId };
+            }
+            else if (path.EndsWith("/api/music/search/" + MusicSearchId, StringComparison.Ordinal))
+            {
+                if (request.Method == HttpMethod.Delete) { MusicSearchDeleted = true; data = new { ok = true }; }
+                else data = JsonSerializer.Deserialize<JsonElement>(MusicSearchState);
+            }
+            else if (path.EndsWith("/api/music/download", StringComparison.Ordinal))
+            {
+                MusicDownloadCalls++;
+                LastPayload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement.Clone();
+                data = new { queued = LastPayload.GetProperty("files").GetArrayLength() };
+            }
+            else if (path.EndsWith("/api/music/transfers", StringComparison.Ordinal)) data = JsonSerializer.Deserialize<JsonElement>(MusicTransfers);
             else throw new InvalidOperationException("Unexpected upstream request: " + path);
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json") };
         }

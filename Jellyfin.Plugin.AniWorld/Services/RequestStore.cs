@@ -57,7 +57,7 @@ public sealed class RequestStore
             var duplicate = _document.Requests.LastOrDefault(item =>
                 item.UserId == userId
                 && item.Backend == request.Backend
-                && (request.Backend == "catalog"
+                && (request.Backend is "catalog" or "music"
                     ? item.Source == request.Source && item.CatalogItemId == request.CatalogItemId && item.CatalogAssetId == request.CatalogAssetId
                 : item.Source == request.Source && item.SeriesUrl == request.SeriesUrl && item.Language == request.Language
                     && item.SubtitleLanguage == request.SubtitleLanguage
@@ -96,6 +96,9 @@ public sealed class RequestStore
                 CatalogItemId = request.CatalogItemId,
                 CatalogAssetId = request.CatalogAssetId,
                 Format = request.Format,
+                MusicUser = request.MusicUser,
+                MusicDirectory = request.MusicDirectory,
+                MusicFilesJson = request.MusicFilesJson,
                 SubmissionKey = Guid.NewGuid().ToString("N"),
                 SelectionLabel = request.SelectionLabel,
                 EpisodesJson = episodesJson,
@@ -163,6 +166,60 @@ public sealed class RequestStore
                 .Where(item => item.Status == RequestStatuses.Queued && item.AniWorldQueueId.HasValue)
                 .Select(item => Clone(item)!)
                 .ToArray();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>Music handed to the downloader's Soulseek client; it has no AniWorld queue id.</summary>
+    public async Task<IReadOnlyList<MediaRequest>> ListQueuedMusicAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return _document.Requests
+                .Where(item => item.Status == RequestStatuses.Queued && item.Backend == "music")
+                .Select(item => Clone(item)!)
+                .ToArray();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>Applies final Soulseek transfer states (request id → state plus optional detail).</summary>
+    public async Task SyncMusicStatesAsync(
+        IReadOnlyDictionary<long, (string Status, string? Error)> states,
+        CancellationToken cancellationToken)
+    {
+        if (states.Count == 0)
+        {
+            return;
+        }
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var document = CloneDocument();
+            var changed = false;
+            foreach (var item in document.Requests.Where(item => item.Status == RequestStatuses.Queued && item.Backend == "music"))
+            {
+                if (!states.TryGetValue(item.Id, out var state)) continue;
+                item.Status = state.Status;
+                item.Error = state.Error;
+                // The downloader scans the Jellyfin music library itself once an album is complete.
+                item.LibraryScanPending = false;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                await SaveLockedAsync(document, cancellationToken).ConfigureAwait(false);
+                _document = document;
+            }
         }
         finally
         {

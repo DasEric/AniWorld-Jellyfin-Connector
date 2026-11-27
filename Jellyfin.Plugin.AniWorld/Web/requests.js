@@ -14,7 +14,8 @@ export default function (view, params) {
   let detailGeneration = 0;
   let discoverGeneration = 0;
   const isCatalog = (category) => ['ebook', 'audiobook', 'podcast'].includes(category);
-  const categoryLabel = (category) => ({ movie: 'Film', series: 'Serie / Anime', manga: 'Manga', ebook: 'E-Book', audiobook: 'Hörbuch', podcast: 'Podcast' })[category] || category;
+  const isMusic = (kind) => kind === 'music';
+  const categoryLabel = (category) => ({ movie: 'Film', series: 'Serie / Anime', manga: 'Manga', ebook: 'E-Book', audiobook: 'Hörbuch', podcast: 'Podcast', music: 'Musik' })[category] || category;
   function availableSources() {
     const category = (state.status.categories || []).find((item) => item.id === q('category').value);
     const types = category ? category.media_types || [] : [];
@@ -140,6 +141,8 @@ export default function (view, params) {
       if (disposed || !view.isConnected) return;
       state.sources = Array.isArray(data.sources) ? data.sources : [];
       (state.status.categories || []).forEach((item) => {
+        // Music only appears when the downloader has Soulseek set up (it then offers the source).
+        if (item.id === 'music' && !state.sources.some((source) => (source.media_types || []).includes('music'))) return;
         const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; q('category').appendChild(option);
       });
       if (Array.from(q('category').options).some((item) => item.value === 'video')) q('category').value = 'video';
@@ -155,6 +158,8 @@ export default function (view, params) {
     const sources = availableSources();
     host.replaceChildren();
     if (!sources.length) { host.innerHTML = '<div class="mf-empty">Keine freigegebene Quelle für diese Kategorie verfügbar.</div>'; return; }
+    // Soulseek has no catalogue to browse: music starts with a search.
+    if (category === 'music') { host.innerHTML = '<div class="mf-empty">Nach Künstler, Album oder Titel suchen. Die Soulseek-Suche dauert bis zu 20 Sekunden.</div>'; return; }
     const rows = new Map();
     sources.forEach((item) => {
       const section = document.createElement('section'); section.className = 'mf-discoverrow';
@@ -198,7 +203,10 @@ export default function (view, params) {
     q('results').hidden = !searching;
     if (!searching) q('results').innerHTML = '';
   }
-  function updatePlaceholder() { q('query').placeholder = q('category').value === 'catalog' ? 'Titel oder Autor suchen' : 'Serien, Filme, Anime oder Manga suchen'; }
+  function updatePlaceholder() {
+    const category = q('category').value;
+    q('query').placeholder = category === 'catalog' ? 'Titel oder Autor suchen' : category === 'music' ? 'Künstler, Album oder Titel suchen' : 'Serien, Filme, Anime oder Manga suchen';
+  }
   function resetSearch() { searchGeneration++; closeDetail(); q('results').replaceChildren(); q('query').value = ''; syncSearchMode(); notice(''); loadDiscover(); }
   q('category').addEventListener('change', () => { updatePlaceholder(); resetSearch(); });
   q('query').addEventListener('input', () => { searchGeneration++; closeDetail(); q('results').innerHTML = ''; syncSearchMode(); });
@@ -211,7 +219,7 @@ export default function (view, params) {
     const sources = availableSources();
     syncSearchMode(); notice('');
     const host = q('results'); host.innerHTML = '';
-    const pending = document.createElement('div'); pending.className = 'mf-empty'; pending.dataset.mfSearchPending = '1'; pending.textContent = 'Weitere Quellen werden durchsucht…'; host.appendChild(pending);
+    const pending = document.createElement('div'); pending.className = 'mf-empty'; pending.dataset.mfSearchPending = '1'; pending.textContent = category === 'music' ? 'Soulseek wird durchsucht, das dauert bis zu 20 Sekunden…' : 'Weitere Quellen werden durchsucht…'; host.appendChild(pending);
     if (!sources.length) { pending.remove(); notice('Keine freigegebene Quelle verfügbar.', true); return; }
     let resultCount = 0; let errorCount = 0;
     let nextSource = 0;
@@ -290,7 +298,7 @@ export default function (view, params) {
     card.insertBefore(cover, card.firstChild); loadCover(cover, poster, item, sourceId);
   }
   function sharePosters(rank, card, item, sourceId) {
-    if (item && isCatalogKind(item.media_kind)) return;
+    if (item && (isCatalogKind(item.media_kind) || item.media_kind === 'music')) return;
     const key = titleKey(item); if (!key) return;
     const poster = item.poster_url || item.cover_url;
     if (poster) {
@@ -307,7 +315,7 @@ export default function (view, params) {
   function createMediaCard(item, sourceId, sourceLabel) {
     const card = document.createElement('article'); card.className = 'mf-card'; card.tabIndex = 0;
     const rawUrl = item.url || item.link || item.series_url;
-    const poster = item.poster_url || item.cover_url;
+    const poster = isMusic(item.media_kind) ? item.cover_key : item.poster_url || item.cover_url;
     if (poster) {
       const cover = document.createElement('img'); cover.className = 'mf-cover'; cover.loading = 'lazy'; cover.alt = '';
       card.appendChild(cover); loadCover(cover, poster, item, sourceId);
@@ -316,18 +324,27 @@ export default function (view, params) {
     // Full details are loaded when the user opens the selected title.
     const body = document.createElement('div'); body.className = 'mf-cardbody';
     const title = document.createElement('div'); title.className = 'mf-cardtitle'; title.textContent = item.title || item.name || 'Unbekannter Titel';
-    const source = document.createElement('div'); source.className = 'mf-source'; source.textContent = [sourceLabel || sourceId, item.grouped_series ? 'Serie · Staffeln/Folgen im Detail' : '', item.author, item.year].filter(Boolean).join(' · ');
+    const source = document.createElement('div'); source.className = 'mf-source';
+    source.textContent = (isMusic(item.media_kind)
+      ? [item.author, musicSummary(item)]
+      : [sourceLabel || sourceId, item.grouped_series ? 'Serie · Staffeln/Folgen im Detail' : '', item.author, item.year]).filter(Boolean).join(' · ');
     body.append(title, source); card.appendChild(body);
     const open = () => openDetail(item, sourceId); card.addEventListener('click', open); card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
     return card;
   }
 
+  // "12 Titel · FLAC · 412 MB" for a Soulseek album.
+  function musicSummary(item) {
+    const formats = Array.isArray(item.formats) ? item.formats.join('/') : '';
+    return [item.track_count ? item.track_count + ' Titel' : '', formats, item.bitrate && !item.lossless ? item.bitrate + ' kbit/s' : '', item.size ? formatSize(item.size) : ''].filter(Boolean).join(' · ');
+  }
   async function loadCover(image, posterUrl, item, sourceId, retried) {
     let objectUrl = '';
     try {
       const catalog = item && isCatalog(item.media_kind);
       const token = catalog ? new URL(posterUrl, window.location.origin).searchParams.get('token') : '';
-      const imageUrl = catalog ? url('Catalog/Cover', { token: token || '', source: sourceId, mediaType: item.media_kind }) : url('Image', { url: posterUrl });
+      const imageUrl = item && isMusic(item.media_kind) ? url('Music/Cover', { key: posterUrl })
+        : catalog ? url('Catalog/Cover', { token: token || '', source: sourceId, mediaType: item.media_kind }) : url('Image', { url: posterUrl });
       const response = await api.fetch({ url: imageUrl, type: 'GET' });
       if (!response || typeof response.blob !== 'function') throw new Error('Ungültige Bildantwort');
       const blob = await response.blob();
@@ -350,6 +367,7 @@ export default function (view, params) {
 
   async function openDetail(item, source, subtitleLanguage = 'none', preferredLanguage = state.status.defaultLanguage) {
     if (isCatalog(item.media_kind)) return openCatalogDetail(item, source);
+    if (isMusic(item.media_kind)) return openMusicDetail(item);
     const rawUrl = item.url || item.link || item.series_url;
     if (!rawUrl) return notice('Der Treffer enthält keine AniWorld-URL.', true);
     const generation = ++detailGeneration;
@@ -431,6 +449,7 @@ export default function (view, params) {
   function setOptions(select, values, preferred) { const clean = Array.from(new Set(values.filter(Boolean))); select.innerHTML = ''; clean.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = value; select.appendChild(option); }); if (clean.includes(preferred)) select.value = preferred; }
   q('request').addEventListener('click', async () => {
     if (state.detail && state.detail.backend === 'catalog') return submitCatalog();
+    if (state.detail && state.detail.backend === 'music') return submitMusic();
     if (!state.detail || !state.detail.plan || !state.detail.plan.missing_count || !q('language').value || !q('provider').value) {
       dialogNotice('Die Anfrage ist noch nicht vollständig vorbereitet. Bitte den Titel schließen und erneut öffnen.', true);
       return;
@@ -482,6 +501,33 @@ export default function (view, params) {
       const result = await call('Requests/Catalog', { method: 'POST', body: { source: detail.source, itemId: detail.id, assetId: asset.id, mediaType: detail.media_kind } });
       if (disposed || generation !== detailGeneration || !view.isConnected) return;
       closeDetail(); notice(detail.title + ' wurde erfolgreich angefragt.' + (result.status === 'pending' ? ' Die Anfrage wartet auf Freigabe.' : ' Die Verarbeitung läuft im Hintergrund.'));
+    } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { dialogNotice(error.message, true); refreshStatus(); } }
+    finally { if (!disposed && generation === detailGeneration && view.isConnected) { q('request').disabled = false; guardRequestButton(); } }
+  }
+  // A Soulseek album arrives complete with its track list; nothing has to be loaded.
+  function openMusicDetail(item) {
+    ++detailGeneration;
+    state.detail = { backend: 'music', token: item.id, title: item.title || 'Unbekanntes Album' };
+    q('overlay').style.display = 'flex'; focusDialog('close'); refreshStatus(); dialogNotice('');
+    view.querySelector('.mf-options').hidden = true; q('catalog-options').hidden = true; q('partial-container').hidden = true;
+    q('detail-title').textContent = state.detail.title;
+    q('description').textContent = [item.author, musicSummary(item), item.lossless ? 'verlustfrei' : '', item.free_slot ? 'sofort verfügbar' : 'Teilnehmer hat eine Warteschlange'].filter(Boolean).join(' · ');
+    q('plan').replaceChildren();
+    const summary = document.createElement('div'); summary.className = 'mf-plan';
+    const headline = document.createElement('div'); headline.textContent = 'Das ganze Album wird angefragt. Der Downloader legt es in der Jellyfin-Musikbibliothek ab.';
+    const list = document.createElement('ol'); list.className = 'mf-tracks';
+    (item.tracks || []).forEach((name) => { const entry = document.createElement('li'); entry.textContent = name; list.appendChild(entry); });
+    summary.append(headline, list); q('plan').appendChild(summary);
+    q('request').textContent = 'Album anfragen'; q('request').disabled = !item.id; guardRequestButton();
+  }
+  async function submitMusic() {
+    const detail = state.detail;
+    const generation = detailGeneration;
+    q('request').disabled = true; dialogNotice('Anfrage wird übermittelt…');
+    try {
+      const result = await call('Requests/Music', { method: 'POST', body: { token: detail.token } });
+      if (disposed || generation !== detailGeneration || !view.isConnected) return;
+      closeDetail(); notice(detail.title + ' wurde erfolgreich angefragt.' + (result.status === 'pending' ? ' Die Anfrage wartet auf Freigabe.' : ' Der Download läuft im Hintergrund.'));
     } catch (error) { if (!disposed && generation === detailGeneration && view.isConnected) { dialogNotice(error.message, true); refreshStatus(); } }
     finally { if (!disposed && generation === detailGeneration && view.isConnected) { q('request').disabled = false; guardRequestButton(); } }
   }
@@ -811,7 +857,8 @@ export default function (view, params) {
   }
   function updateRequestCard(card, item, admin, progress) {
     card.querySelector('[data-role="title"]').textContent = item.title;
-    card.querySelector('[data-role="meta"]').textContent = (admin ? item.username + ' · ' : '') + categoryLabel(item.mediaType) + ' · ' + (item.selectionLabel || ((item.episodes || []).length + ' Episoden')) + ' · ' + item.language + (item.subtitleLanguage === 'deu' ? ' · Untertitel: Deutsch' : '') + ' · ' + new Date(item.createdUtc).toLocaleString();
+    // Music has no audio language, so empty parts are left out instead of leaving " ·  · ".
+    card.querySelector('[data-role="meta"]').textContent = [admin ? item.username : '', categoryLabel(item.mediaType), item.selectionLabel || ((item.episodes || []).length + ' Episoden'), item.language, item.subtitleLanguage === 'deu' ? 'Untertitel: Deutsch' : '', new Date(item.createdUtc).toLocaleString()].filter(Boolean).join(' · ');
     const pill = card.querySelector('[data-role="pill"]'); pill.className = 'mf-pill ' + item.status; pill.textContent = progressLabel(progress) || statusLabel(item.status);
     const progressBox = card.querySelector('[data-role="progress"]'); progressBox.hidden = !progress;
     if (progress) {

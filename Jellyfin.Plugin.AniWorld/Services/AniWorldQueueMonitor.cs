@@ -82,6 +82,22 @@ public sealed class AniWorldQueueMonitor : BackgroundService
             }
         }
 
+        var music = await _store.ListQueuedMusicAsync(cancellationToken).ConfigureAwait(false);
+        if (music.Count > 0)
+        {
+            try
+            {
+                var transfers = await _aniWorld.GetMusicTransfersAsync(cancellationToken).ConfigureAwait(false);
+                await _store.SyncMusicStatesAsync(
+                    AniWorldRequestApplicationService.ReadMusicStates(transfers, music, DateTime.UtcNow),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (AniWorldException exception)
+            {
+                _logger.LogWarning(exception, "Could not read the Soulseek transfers; music completion will be checked again.");
+            }
+        }
+
         var pending = await _store.ListPendingLibraryScansAsync(cancellationToken).ConfigureAwait(false);
         foreach (var group in pending.GroupBy(GetScanKind))
         {

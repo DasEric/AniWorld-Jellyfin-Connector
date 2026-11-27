@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2.3.0
+
+- **Neue Kategorie „Musik“:** Im Kategorie-Dropdown gibt es neben „Serien & Filme“ jetzt „Musik“. „Serien & Filme“ bleibt vorausgewählt. Die Kategorie erscheint nur, wenn Soulseek im Musik-Tab des H0melab Downloaders eingerichtet ist.
+- **Album-Suche über Soulseek:** Die Suche läuft über den Soulseek-Client des Downloaders und dauert bis zu 20 Sekunden. Treffer sind ganze Alben mit Titelliste, Format, Größe und, sofern vorhanden, Cover. Soulseek-Nutzer und Dateipfade bleiben auf dem Server; der Browser sieht nur eine Auswahlkennung.
+- **Anfrage, Freigabe und Status wie gewohnt:** Musik-Anfragen durchlaufen die normale Admin-Freigabe und das Anfrage-Limit. Danach übergibt der Connector das Album an den Downloader und verfolgt die Übertragung bis „abgeschlossen“, „teilweise“, „fehlgeschlagen“ oder „abgebrochen“. Ablage, Tags und Scan der Jellyfin-Musikbibliothek übernimmt der Downloader.
+- **Admin-Schalter:** „Musik-Suche und -Anfragen erlauben“ ist standardmäßig eingeschaltet und lässt sich in den Plugin-Einstellungen abschalten.
+
 ## 2.2.4
 
 - **Kein falscher AniWorld-Fehler mehr:** AniWorld beantwortet eine Suche ohne Treffer mit einer leeren Antwort. H0melab Downloader 2.5.0 meldet das als HTTP 502 („returned no valid response“). Der Connector wertet genau diesen Fall jetzt als „keine Treffer“. Echte Ausfälle werden weiterhin angezeigt.
