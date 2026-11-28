@@ -1,5 +1,9 @@
 # Änderungen
 
+## Unveröffentlicht
+
+- **Echte Ursache beim Speichern der Einstellungen:** Bricht die Einstellungsseite das Speichern selbst ab, etwa weil URL oder API-Key bei eingeschalteter Zielzuordnung geändert wurden, zeigt sie jetzt den konkreten Hinweis. Bisher stand dort die irreführende Meldung „Verbindung fehlgeschlagen …“, obwohl gar keine Verbindung versucht wurde.
+
 ## 2.3.0
 
 - **Neue Kategorie „Musik“:** Im Kategorie-Dropdown gibt es neben „Serien & Filme“ jetzt „Musik“. „Serien & Filme“ bleibt vorausgewählt. Die Kategorie erscheint nur, wenn Soulseek im Musik-Tab des H0melab Downloaders eingerichtet ist.

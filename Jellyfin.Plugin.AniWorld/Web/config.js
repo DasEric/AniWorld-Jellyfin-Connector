@@ -19,6 +19,9 @@ export default function (view) {
         if (payload && typeof payload.error === 'string' && payload.error.trim()) return payload.error;
       } catch (_) { /* the response was empty or not JSON */ }
     }
+    // Checks inside this page throw a plain Error with a German explanation; show it
+    // instead of the generic hint (network failures arrive as TypeError and keep the hint).
+    if (error instanceof Error && error.name === 'Error' && error.message.trim()) return error.message;
     return 'Verbindung fehlgeschlagen. Bitte URL, API-Key und installiertes AniWorld-System prüfen.';
   }
   function showKeyStatus(hasKey) {
