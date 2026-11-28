@@ -1,6 +1,6 @@
 # Änderungen
 
-## Unveröffentlicht
+## 2.3.1
 
 - **Echte Ursache beim Speichern der Einstellungen:** Bricht die Einstellungsseite das Speichern selbst ab, etwa weil URL oder API-Key bei eingeschalteter Zielzuordnung geändert wurden, zeigt sie jetzt den konkreten Hinweis. Bisher stand dort die irreführende Meldung „Verbindung fehlgeschlagen …“, obwohl gar keine Verbindung versucht wurde.
 
